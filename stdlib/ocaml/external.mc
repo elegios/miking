@@ -97,7 +97,7 @@ lang OCamlGenerateExternal = OCamlAst + MExprAst
   | tys ->
     let ns = create (length tys) (lam. nameSym "t") in
     let pvars =
-      map (lam n. PatNamed { ident = PName n, info = info }) ns
+      map (lam n. PatNamed { ident = PName n, info = info, ty = tyunknown_ }) ns
     in
     let tpat = OPatTuple { pats = pvars } in
     let costsTs =
@@ -266,7 +266,7 @@ lang OCamlGenerateExternal = OCamlAst + MExprAst
       with Some (TyRecord {fields = fields1, labels = labels1}) then
         let ns = create (length labels1) (lam. nameSym "r") in
         let pvars =
-          map (lam n. PatNamed { ident = PName n, info = info }) ns
+          map (lam n. PatNamed { ident = PName n, info = info, ty = tyunknown_ }) ns
         in
         let rpat = patRecord (zip (map sidToString labels1) pvars) info in
         match unzip fields2 with (labels2, tys2) then
