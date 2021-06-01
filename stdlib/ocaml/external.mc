@@ -268,7 +268,13 @@ lang OCamlGenerateExternal = OCamlAst + MExprAst
         let pvars =
           map (lam n. PatNamed { ident = PName n, info = info, ty = tyunknown_ }) ns
         in
-        let rpat = patRecord (zip (map sidToString labels1) pvars) info in
+        let rpat =
+          PatRecord {
+            bindings = mapFromList cmpSID (zip labels1 pvars),
+            ty = ty1,
+            info = info
+          }
+        in
         match unzip fields2 with (labels2, tys2) then
           let costsTms =
             mapi

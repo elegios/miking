@@ -185,21 +185,22 @@ let pcon_ = use MExprAst in
   npcon_ (nameNoSym cs) cp
 
 let patRecord = use MExprAst in
-  lam bindings : [(String, Pat)].
   lam info : Info.
+  lam ty : Type.
+  lam bindings : [(String, Pat)].
   let bindingMapFunc = lam b : (String, a). (stringToSid b.0, b.1) in
   PatRecord {
     bindings = mapFromList cmpSID (map bindingMapFunc bindings),
     info = info,
-    ty = tyunknown_
+    ty = ty
   }
 
-let prec_ = lam bindings. patRecord bindings (NoInfo ())
+let prec_ = patRecord (NoInfo ()) tyunknown_
 
-let patTuple = lam ps : [Pat]. lam info : Info.
-  patRecord (mapi (lam i. lam p. (int2string i, p)) ps) info
+let patTuple = lam info : Info. lam ty. lam ps : [Pat].
+  patRecord info ty (mapi (lam i. lam p. (int2string i, p)) ps)
 
-let ptuple_ = lam ps. patTuple ps (NoInfo ())
+let ptuple_ = patTuple (NoInfo ()) tyunknown_
 
 let pseqtot_ = use MExprAst in
   lam ps.
