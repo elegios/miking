@@ -48,6 +48,10 @@ let _none = use OCamlAst in OTmConAppExt {ident = _noneName, args = []}
 let _if = use OCamlAst in lam cond. lam thn. lam els. _omatch_ cond [(ptrue_, thn), (pfalse_, els)]
 let _tuplet = use OCamlAst in lam pats. lam val. lam body. _omatch_ val [(OPatTuple {pats = pats}, body)]
 
+let _isLengthAtLeastName = intrinsicOpSeq "is_length_at_least"
+let _isLengthAtLeast = use OCamlAst in
+  appf2_ (OTmVarExt {ident = _isLengthAtLeastName})
+
 let _builtinNameMap : Map String Name =
   let builtinStrs =
     match unzip builtin with (strs, _) then
@@ -527,11 +531,16 @@ lang OCamlGenerate = MExprAst + OCamlAst + OCamlTopGenerate + OCamlMatchGenerate
       (wrap, postNames, midName)
     with (postWrap, postNames, midName) in
     let wrap = lam cont.
-      bind_
-        (nulet_ lenName (length_ (nvar_ targetName)))
-        (_if (lti_ (nvar_ lenName) (int_ minLen))
+      match postfix with [] then
+        _if (_isLengthAtLeast (nvar_ targetName) (int_ minLen))
+          (preWrap (postWrap cont))
           _none
-          (preWrap (postWrap cont))) in
+      else
+        bind_
+          (nulet_ lenName (length_ (nvar_ targetName)))
+          (_if (lti_ (nvar_ lenName) (int_ minLen))
+            _none
+            (preWrap (postWrap cont))) in
     let names = foldl mergeNames assocEmpty (concat preNames postNames) in
     let names = match middle with PName n then assocInsert {eq=nameEqSym} n midName names else names in
     (names, wrap)
