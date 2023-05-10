@@ -557,6 +557,16 @@ utest
             (lam e. utest _bind5 a b c d e f with semantics a b c d e f using eq in ())))))
 with ()
 
+let _mapWE
+  : all w1. all w2. all e1. all e2. all a. (w1 -> w2) -> (e1 -> e2) -> Result w1 e1 a -> Result w2 e2 a
+  = lam w. lam e. lam res.
+    switch res
+    case ResultOk x then
+      ResultOk {warnings = mapMap w x.warnings, value = x.value}
+    case ResultErr x then
+      ResultErr {warnings = mapMap w x.warnings, errors = mapMap e x.errors}
+    end
+
 
 -- Perform a computation only if both elements in the input are error
 -- free. Preserves warnings and errors, element-wise, but if the input have an
@@ -672,6 +682,8 @@ let result =
   -- Destructors
   , consume = _consume
   , toOption = _toOption
+  -- Changing warnings or errors
+  , mapWE = _mapWE
   -- Mapping, action produces no new errors or warnings
   , map = _map
   , map2 = _map2
