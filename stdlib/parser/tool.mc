@@ -1,6 +1,7 @@
 include "selfhost-gen.mc"
 include "gen-ast.mc"
 include "gen-op-ast.mc"
+include "lrk.mc"
 include "math.mc"
 include "result.mc"
 include "seq.mc"
@@ -26,11 +27,7 @@ lang PreToken = TokenParser
 end
 
 -- NOTE(vipa, 2022-04-25): Similar to PreToken, these are only
--- intended for analysis. We cannot use normal LitSpec constructed
--- through `litSym` since it will check that the literal lexes as a
--- single token, which it only would if we have the appropriate
--- language fragments included, which we don't have in the
--- *generating* code, we only have that in the *generated* code.
+-- intended for analysis.
 lang PreLitToken = TokenParser
   syn TokenRepr =
   | PreLitRepr {lit : String}
@@ -42,10 +39,7 @@ lang PreLitToken = TokenParser
   | (PreLitRepr l, PreLitRepr r) -> cmpString l.lit r.lit
 end
 
-lang LL1Analysis = ParserGeneration + PreToken + PreLitToken
-end
-
-lang Fragments = LL1Analysis + MExprCmp + MExprPrettyPrint + CarriedBasic + MExprEq
+lang Fragments = PreToken + PreLitToken + MExprCmp + MExprPrettyPrint + CarriedBasic + MExprEq + LRParser + MLangAst + MkOpLanguages + LRParser
 end
 
 let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
@@ -60,8 +54,9 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
     } in
   type TokenInfo =
     { ty : Type
-    , repr : Expr
+    , repr : TokenRepr
     , tokConstructor : Name
+    , bareTy : Type
     , getInfo : Expr -> Expr
     , getValue : Expr -> Expr
     } in
@@ -332,8 +327,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
     result.withAnnotations multi defs
   in
   type TokenDeclDesugaredRecord =
-    { repr : Option (Info, Expr)
-    , constructor : Option (Info, {v: Name, i: Info})
+    { constructor : Option (Info, {v: Name, i: Info})
     , fragment : Option (Info, {v: String, i: Info})
     , ty : Option (Info, Type)
     , base : Option (Info, {v: Name, i: Info})
@@ -404,7 +398,6 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       let unknownError = match mass.unknown with [] then result.ok () else
         let msg = match mass.unknown with [_] then "Unknown property:\n" else "Unknown properties:\n" in
         result.err (multiMsg x.info mass.unknown msg) in
-      let repr = getSingleDef x.info "repr" mass.repr in
       let constructor = getSingleDef x.info "constructor" mass.constructor in
       let fragment = getSingleDef x.info "fragment" mass.fragment in
       let ty = getSingleDef x.info "ty" mass.ty in
@@ -413,16 +406,15 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       result.withAnnotations
         unknownError
         (result.apply
-          (result.map5
-            (lam repr. lam constructor. lam fragment. lam ty. lam base. lam wrap.
-              { repr = repr
-              , constructor = constructor
+          (result.map4
+            (lam constructor. lam fragment. lam ty. lam base. lam wrap.
+              { constructor = constructor
               , fragment = fragment
               , ty = ty
               , base = base
               , wrap = wrap
               })
-            repr constructor fragment ty base)
+            constructor fragment ty base)
             wrap)
   in
   let desugaredTokenToTokenInfo
@@ -431,28 +423,27 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       -- TODO(vipa, 2022-04-21): It would be nice to warn about unused
       -- properties, but it's annoying to implement atm
       let frag = match record.fragment with Some (_, str)
-        then let str: {v: String, i: Info} = str in Some (result.ok str.v)
+        then Some (result.ok str.v)
         else None () in
       match name with Some name then
         let name: {v: Name, i: Info} = name in
         let wrap: (Expr -> Expr) -> Expr -> Expr = match record.wrap with Some (_, f)
           then lam inner. lam e. app_ f (inner e)
           else lam f. f in
-        switch (record.repr, record.constructor, record.base)
-        case (Some (_, repr), Some (_, constructor), None ()) then
-          let constructor: {v: Name, i: Info} = constructor in
+        switch (record.constructor, record.base)
+        case (Some (_, constructor), None ()) then
+          let ty = match record.ty with Some (_, ty) then ty else tyWithInfo name.i (ntycon_ name.v) in
           let tinfo =
-            { ty = match record.ty with Some (_, ty)
-              then ty
-              else tyWithInfo name.i (ntycon_ name.v)
-            , repr = repr
+            { ty = ty
+            , repr = PreRepr {constructorName = constructor.v}
+            , bareTy = ty
             , tokConstructor = constructor.v
             , getInfo = recordproj_ "info"
             -- TODO(vipa, 2022-04-21): Provide a more principled way to extract `info` and `val`
             , getValue = wrap (recordproj_ "val")
             } in
           (frag, Some (result.ok tinfo))
-        case (None (), None (), Some (_, base)) then
+        case (None (), Some (_, base)) then
           let base: {v: Name, i: Info} = base in
           let base: Res {v: Name, i: Info} = lookupName base nameEnv.types in
           let f: {v: Name, i: Info} -> Res TokenInfo = lam name.
@@ -460,15 +451,15 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
               match tinfo with Right tinfo then
                 result.map
                   (lam tinfo: TokenInfo.
-                    {{tinfo
-                       with ty = match record.ty with Some (_, ty) then ty else tinfo.ty}
-                       with getValue = wrap tinfo.getValue})
+                    { tinfo with getValue = wrap tinfo.getValue
+                    , ty = match record.ty with Some (_, ty) then ty else tinfo.ty
+                    })
                   tinfo
               else result.err (simpleMsg name.i "This name refers to a type; it must be a token.\n")
             else result.err (simpleMsg name.i "The base token must be defined earlier in the file.\n")
           in (frag, Some (result.bind base f))
         case _ then
-          (frag, Some (result.err (simpleMsg surround "A named token declaration must have both 'repr' and 'constructor', or 'base'.\n")))
+          (frag, Some (result.err (simpleMsg surround "A named token declaration must have 'constructor', or 'base'.\n")))
         end
       else match record.fragment with Some _ then
         (frag, None ())
@@ -884,21 +875,21 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       (map (lam nt : Name. (nt, f nt)) nts)
   in
   let productions
-    : Ref [Res (Expr, Production GenLabel ())] -- Each `Expr` evaluates to a production for ll1.mc
+    : Ref [Res Production]
     = ref []
   in
 
   type PartialSymbol =
-    { repr : Expr
-    , pat : Pat
+    { param : (Name, Type)
     , info : Expr
-    , sym : SpecSymbol Token TokenRepr () GenLabel
+    , sym : Term
     } in
   type PartialProduction =
     { record : RecordInfo
-    -- `repr` evaluates to a `SpecSymbol`, `pat` matches the
-    -- corresponding `ParsedSymbol`, `info` evaluates to a single `Info`
-    -- for the corresponding symbol
+    -- `param` is the parameter to be added to the semantic action for
+    -- the Production, `info` is an expression that evaluates to the
+    -- `Info` field of the parsed symbol, and `sym` is the actual
+    -- symbol to be added to the `Production`
     , symbols : [Res PartialSymbol]
     , terms : [Res Expr] -- Each `Expr` evaluates to a sequence of `Info`s
     , fields : Map String [Res Expr] -- Each `Expr` evaluates to a sequence of the underlying type
@@ -991,26 +982,23 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   let mkRecordOfSeqsSymbol
     : Name -> RecordInfo -> PartialProduction
     = lam nt. lam record.
-      let infoName = nameSym "info" in
-      let valName = nameSym "val" in
+      let paramName = nameSym "s" in
       let mkSymbol = lam ty.
-        { repr = app_ (var_ "ntSym") (nvar_ nt)
-        , pat = pcon_ "UserSym"
-          (use MExprAst in PatNamed {ident = PName valName, info = NoInfo (), ty = ty})
-        , info = recordproj_ infoFieldLabel (nvar_ valName)
-        , sym = ntSym nt
+        { param = (paramName, ty)
+        , info = recordproj_ infoFieldLabel (nvar_ paramName)
+        , sym = NonTerminal nt
         } in
       { record = record
       , symbols = [result.map mkSymbol (mkRecordOfSeqsTy record)]
-      , terms = [result.ok (recordproj_ termsFieldLabel (nvar_ valName))]
-      , fields = mapMapWithKey (lam k. lam. [result.ok (recordproj_ k (nvar_ valName))]) record
+      , terms = [result.ok (recordproj_ termsFieldLabel (nvar_ paramName))]
+      , fields = mapMapWithKey (lam k. lam. [result.ok (recordproj_ k (nvar_ paramName))]) record
       }
   in
   -- NOTE(vipa, 2022-04-05): Make a production that parses something
   -- internal to a production, i.e., its action produces a record with
   -- fields that are all sequences.
   let completeSeqProduction
-    : (Expr -> Expr) -> Name -> GenLabel -> PartialProduction -> Res (Expr, Production GenLabel ())
+    : (Expr -> Expr) -> Name -> GenLabel -> PartialProduction -> Res Production
     = lam wrap. lam nt. lam label. lam x.
       let symbols =
         result.mapM identity x.symbols in
@@ -1023,15 +1011,15 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         : [PartialSymbol]
         -> [Expr]
         -> Map String [Expr]
-        -> (Expr, Production GenLabel ())
+        -> Production
         = lam symbols. lam terms. lam fields.
-          let temp = foldl
+          match foldl
             (lam acc. lam x : PartialSymbol.
-              match acc with (repr, pat, info, sym) in
-              (snoc repr x.repr, snoc pat x.pat, snoc info x.info, snoc sym x.sym))
-            ([], [], [], [])
-            symbols in
-          match temp with (reprs, pats, infos, syms) in
+              match acc with (param, info, sym) in
+              (snoc param x.param, snoc info x.info, snoc sym x.sym))
+            ([], [], [])
+            symbols
+          with (params, infos, syms) in
           let action: Expr =
             let mkField : String -> (String, Expr) = lam field.
               let exprs = match mapLookup field fields with Some exprs then exprs else [] in
@@ -1040,31 +1028,20 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             let fields = concat fields [(infoFieldLabel, mergeInfos_ infos), (termsFieldLabel, join_ terms)] in
             let stateName = nameSym "state" in
             let seqName = nameSym "res" in
-            let pats = pseqtot_ pats in
-            let toRebind = map
-              (lam pair. match pair with (name, ty) in nlet_ name ty (fromDyn_ (nvar_ name)))
-              (collectNamesWithTypes pats) in
-            nlam_ stateName stateTy
-              (nulam_ seqName
-                (match_ (nvar_ seqName) pats
-                  (bindall_
-                    (snoc toRebind
-                      (asDyn_ (wrap (urecord_ fields)))))
-                  never_))
+            let res = wrap (urecord_ fields) in
+            let resTy = tyTm res in
+            let res = nlam_ stateName stateTy
+              (foldr (lam sym. lam acc. nulam_ sym.param.0 acc) res symbols) in
+            let res = withType
+              (tyarrow_ stateTy
+                (foldr (lam sym. lam acc. tyarrow_ sym.param.1 acc) resTy symbols))
+              res in
+            res
           in
-          let exprProduction = urecord_
-            [ ("nt", nvar_ nt)
-            , ("label", unit_)
-            , ("rhs", seq_ reprs)
-            , ("action", action)
-            ] in
-          let production =
-            { nt = nt
-            , label = label
-            , rhs = syms
-            , action = lam. lam. asDyn ()
-            } in
-          (exprProduction, production)
+          { nt = nt
+          , terms = map (lam sym. sym.sym) symbols
+          , action = action
+          }
       in result.map3 mkProd symbols terms fields
   in
 
@@ -1076,41 +1053,38 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       case NtTerm conf then
         let ty = result.map (lam config: TypeInfo. targetableType config.ty) conf.config in
         let pairName = nameSym "ntVal" in
-        let pairPat = withTypePat (tytuple_ [tycon_ "Info", ntycon_ conf.name]) (npvar_ pairName) in
+        let pairTy = tytuple_ [tycon_ "Info", ntycon_ conf.name] in
         let sym =
-          { repr = app_ (var_ "ntSym") (nvar_ conf.name)
-          , pat = pcon_ "UserSym" pairPat
+          { param = (pairName, pairTy)
           , info = tupleproj_ 0 (nvar_ pairName)
-          , sym = ntSym conf.name
+          , sym = NonTerminal conf.name
           } in
         (result.ok sym, [], result.ok (seq_ [tupleproj_ 1 (nvar_ pairName)]), ty)
 
       case TokenTerm config then
         let valName = nameSym "x" in
         let ty = result.map
-          (lam config: TokenInfo. untargetableType (tyrecord_ [("v", config.ty), ("i", tycon_ "Info")]))
+          (lam config: TokenInfo. tyrecord_ [("v", config.bareTy), ("i", tycon_ "Info")])
           config in
-        let sym = result.map
-          (lam config: TokenInfo.
-            { repr = app_ (var_ "tokSym") config.repr
-            , pat = pcon_ "TokParsed" (npcon_ config.tokConstructor (npvar_ valName))
+        let sym = result.map2
+          (lam config: TokenInfo. lam ty.
+            { sym = Terminal config.repr
+            , param = (valName, ty)
             , info = config.getInfo (nvar_ valName)
-            , sym = tokSym (PreRepr {constructorName = config.tokConstructor})
             })
-          config in
+          config ty in
         let info = result.map (lam config: TokenInfo. seq_ [config.getInfo (nvar_ valName)]) config in
         let val = result.map
           (lam config: TokenInfo. seq_ [urecord_ [("v", config.getValue (nvar_ valName)), ("i", config.getInfo (nvar_ valName))]])
           config in
-        (sym, [info], val, ty)
+        (sym, [info], val, result.map untargetableType ty)
 
       case LitTerm lit then
         let valName = nameSym "l" in
         ( result.ok
-          { repr = app_ (var_ "litSym") (str_ lit)
-          , pat = pcon_ "LitParsed" (npvar_ valName)
+          { param = (valName, tycon_ "Info")
+          , sym = Terminal (PreLitRepr {lit = lit})
           , info = recordproj_ "info" (nvar_ valName)
-          , sym = tokSym (PreLitRepr {lit = lit})
           }
         , [result.ok (seq_ [recordproj_ "info" (nvar_ valName)])]
         , result.ok (seq_ [recordproj_ "info" (nvar_ valName)])
@@ -1588,38 +1562,29 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
                 opNames.atom
               in
               let action =
-                let seqName = nameSym "seq" in
-                let pats = pseqtot_ [lPartSym.pat, ntSym.pat, rPartSym.pat] in
-                let toRebind = map
-                  (lam pair. match pair with (name, ty) in nlet_ name ty (fromDyn_ (nvar_ name)))
-                  (collectNamesWithTypes pats) in
-                ulam_ ""
-                  (nulam_ seqName
-                    (match_ (nvar_ seqName) pats
-                      (bindall_
-                        (snoc toRebind
-                          (asDyn_
-                            (nconapp_ conName
-                              (urecord_
-                                [ (infoFieldLabel, mergeInfos_ [lPartSym.info, ntSym.info, rPartSym.info])
-                                , (termsFieldLabel, seq_ [lPartSym.info, rPartSym.info])
-                                , ("inner", match_ ntVal (pseqtot_ [pvar_ "x"]) (var_ "x") never_)
-                                ])))))
-                      never_))
+                let fn = ulam_ ""
+                  (nlam_ lPartSym.param.0 lPartSym.param.1
+                    (nlam_ ntSym.param.0 ntSym.param.1
+                      (nlam_ rPartSym.param.0 rPartSym.param.1
+                        (nconapp_ conName
+                          (urecord_
+                            [ (infoFieldLabel, mergeInfos_ [lPartSym.info, ntSym.info, rPartSym.info])
+                            , (termsFieldLabel, seq_ [lPartSym.info, rPartSym.info])
+                            , ("inner", match_ ntVal (pseqtot_ [pvar_ "x"]) (var_ "x") never_)
+                            ])))))
+                in
+                let ty = tyarrow_ stateTy
+                  (tyarrow_ lPartSym.param.1
+                    (tyarrow_ ntSym.param.1
+                      (tyarrow_ rPartSym.param.1 tyunknown_)))
+                in
+                withType ty fn
               in
               let prod =
-                ( urecord_
-                  [ ("nt", nvar_ atomNt)
-                  , ("label", unit_)
-                  , ("rhs", seq_ [lPartSym.repr, ntSym.repr, rPartSym.repr])
-                  , ("action", action)
-                  ]
-                , { nt = atomNt
-                  , label = TyGrouping {left = lpar.i, right = rpar.i}
-                  , rhs = [lPartSym.sym, ntSym.sym, rPartSym.sym]
-                  , action = lam. lam. asDyn ()
-                  }
-                ) in
+                { nt = atomNt
+                , terms = [lPartSym.sym, ntSym.sym, rPartSym.sym]
+                , action = action
+                } in
               modref productions (snoc (deref productions) (result.ok prod));
               { requiredFragments = []
               , opConstructorName = conName
@@ -1645,25 +1610,6 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   let composedAstFragmentName = nameSym (concat langName "Ast") in
 
   let genOpResult : Res GenOpResult =
-    let mkMirroredProduction
-      : all label. { nt : Name, rhs : [Name], label : label, action : Expr }
-      -> (Expr, Production label ())
-      = lam prod.
-        let liftSpec : Name -> Expr = lam sym.
-          (app_ (var_ "ntSym") (nvar_ sym)) in
-        ( urecord_
-          [ ("nt", nvar_ prod.nt)
-          , ("rhs", seq_ (map liftSpec prod.rhs))
-          , ("label", unit_)
-          , ("action", prod.action)
-          ]
-        , { nt = prod.nt
-          , rhs = map ntSym prod.rhs
-          , label = prod.label
-          , action = lam. lam. error "impossible"
-          }
-        )
-    in
     let synInfo : Res [(Name, SynDesc)] =
       let f : Map Name (Map (Name, Name) Ordering) -> Constructor -> Res (Name, SynDesc) = lam precedence. lam constructor.
         let precedence = mapLookupOrElse (lam. mapEmpty cmpNamePair) constructor.synType precedence in
@@ -1689,7 +1635,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       in result.bind2 precedences badConstructors (lam precedences. lam cs. result.mapM (f precedences) cs)
     in
     let f : [(Name, SynDesc)] -> [ConstructorInfo] -> [GenOperator] -> [Name] -> GenOpResult = lam syns. lam constructors. lam groupingOperators. lam extraFragments.
-      use MkOpLanguages in
+      -- use MkOpLanguages in
       let genOpInput =
         { fieldLabels = { info = infoFieldLabel, terms = termsFieldLabel }
         , syns = mapFromSeq nameCmp syns
@@ -1704,81 +1650,66 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         , extraFragments = cons (nameNoSym "LL1Parser") extraFragments
         } in
       let genOpResult : GenOpResult = mkOpLanguages genOpInput in
-      let mkRegexProductions : {v: Name, i: Info} -> [Res (Expr, Production GenLabel ())] = lam original.
-        let lclosed = nameSym (concat (nameGetStr original.v) "_lclosed") in
-        let lopen = nameSym (concat (nameGetStr original.v) "_lopen") in
+      let mkRegexProductions : {v: Name, i: Info} -> [Res Production] = lam original.
+        let rclosed = nameSym (concat (nameGetStr original.v) "_rclosed") in
+        let ropen = nameSym (concat (nameGetStr original.v) "_ropen") in
         let regexNts : {prefix : Name, infix : Name, postfix : Name, atom : Name} =
           mapFindExn original.v operatorNtNames in
-        let top = mkMirroredProduction
+        let top =
           { nt = original.v
-          , label = TyTop original
-          , rhs = [lclosed]
-          , action = ulam_ "" (ulam_ "seq"
-            (match_ (var_ "seq") (pseqtot_ [pcon_ "UserSym" (pvar_ "cont")])
-              (app_ (fromDyn_ (var_ "cont")) (conapp_ "Some" (app_ (var_ "breakableInitState") unit_)))
-              never_
-            ))
+          , terms = [NonTerminal rclosed]
+          , action = withType
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ tyunknown_))  -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p" (ulam_ "st" (genOpResult.finalizeFor original.v (var_ "p") (var_ "st"))))
           } in
-        let atom = mkMirroredProduction
-          { nt = lclosed
-          , label = TyRegex {nt = original, kind = LRegAtom ()}
-          , rhs = [regexNts.atom, lopen]
-          , action = ulam_ "p" (ulam_ "seq"
-            (match_ (var_ "seq")
-              (pseqtot_ [pcon_ "UserSym" (pvar_ "x"), pcon_ "UserSym" (pvar_ "cont")])
-              (asDyn_
-                (ulam_ "st"
-                  (app_ (fromDyn_ (var_ "cont"))
-                    (genOpResult.addAtomFor original.v (var_ "p") (fromDyn_ (var_ "x")) (var_ "st")))))
-              never_))
+        let atom =
+          { nt = rclosed
+          , terms = [NonTerminal ropen, NonTerminal regexNts.atom]
+          , action = withType
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p"
+              (ulam_ "st"
+                (ulam_ "x"
+                  (genOpResult.addAtomFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let infix = mkMirroredProduction
-          { nt = lopen
-          , label = TyRegex {nt = original, kind = LRegInfix ()}
-          , rhs = [regexNts.infix, lclosed]
-          , action = ulam_ "p" (ulam_ "seq"
-            (match_ (var_ "seq")
-              (pseqtot_ [pcon_ "UserSym" (pvar_ "x"), pcon_ "UserSym" (pvar_ "cont")])
-              (asDyn_
-                (ulam_ "st"
-                  (app_ (fromDyn_ (var_ "cont"))
-                    (genOpResult.addInfixFor original.v (var_ "p") (fromDyn_ (var_ "x")) (var_ "st")))))
-              never_))
+        let infix =
+          { nt = ropen
+          , terms = [NonTerminal rclosed, NonTerminal regexNts.infix]
+          , action = withType
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p"
+              (ulam_ "st"
+                (ulam_ "x"
+                  (genOpResult.addInfixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let prefix = mkMirroredProduction
-          { nt = lclosed
-          , label = TyRegex {nt = original, kind = LRegPrefix ()}
-          , rhs = [regexNts.prefix, lclosed]
-          , action = ulam_ "p" (ulam_ "seq"
-            (match_ (var_ "seq")
-              (pseqtot_ [pcon_ "UserSym" (pvar_ "x"), pcon_ "UserSym" (pvar_ "cont")])
-              (asDyn_
-                (ulam_ "st"
-                  (app_ (fromDyn_ (var_ "cont"))
-                    (genOpResult.addPrefixFor original.v (var_ "p") (fromDyn_ (var_ "x")) (var_ "st")))))
-              never_))
+        let prefix =
+          { nt = ropen
+          , terms = [NonTerminal ropen, NonTerminal regexNts.prefix]
+          , action = withType
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p"
+              (ulam_ "st"
+                (ulam_ "x"
+                  (genOpResult.addPrefixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let postfix = mkMirroredProduction
-          { nt = lopen
-          , label = TyRegex {nt = original, kind = LRegPostfix ()}
-          , rhs = [regexNts.postfix, lopen]
-          , action = ulam_ "p" (ulam_ "seq"
-            (match_ (var_ "seq")
-              (pseqtot_ [pcon_ "UserSym" (pvar_ "x"), pcon_ "UserSym" (pvar_ "cont")])
-              (asDyn_
-                (ulam_ "st"
-                  (app_ (fromDyn_ (var_ "cont"))
-                    (genOpResult.addPostfixFor original.v (var_ "p") (fromDyn_ (var_ "x")) (var_ "st")))))
-              never_))
+        let postfix =
+          { nt = rclosed
+          , terms = [NonTerminal rclosed, NonTerminal regexNts.postfix]
+          , action = withType
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p"
+              (ulam_ "st"
+                (ulam_ "x"
+                  (genOpResult.addPostfixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let final = mkMirroredProduction
-          { nt = lopen
-          , label = TyRegex {nt = original, kind = LRegEnd ()}
-          , rhs = []
-          , action = ulam_ "p" (ulam_ ""
-            (asDyn_ (ulam_ "st" (genOpResult.finalizeFor original.v (var_ "p") (var_ "st")))))
+        let initial =
+          { nt = ropen
+          , terms = []
+          , action = withType
+            (tyarrow_ stateTy tyunknown_)  -- TODO(vipa, 2023-05-11): proper type?
+            (ulam_ "p" (app_ (var_ "breakableInitState") unit_))
           } in
-        map result.ok [top, atom, infix, prefix, postfix, final]
+        map result.ok [top, atom, infix, prefix, postfix, initial]
       in
       let newProds = map mkRegexProductions ntsWithInfo in
       modref productions (join (cons (deref productions) newProds));
@@ -1786,141 +1717,154 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
     in result.map4 f synInfo constructors groupingOperators extraFragments
   in
 
-  let productions : Res [(Expr, Production GenLabel ())] = result.mapM identity (deref productions) in
-  let ll1Error : Res () =
-    let snd = lam prod: (Expr, Production GenLabel ()). prod.1 in
-    let productions = result.map (map snd) productions in
-    result.bind2 start productions
-      (lam start: Name. lam productions: [Production GenLabel ()].
-        match genParsingTable {start = start, productions = productions} with Left err then
-          let errs : [(SpecSymbol Token TokenRepr () GenLabel, [GenLabel])] = join (map mapBindings (mapValues err)) in
-          let regexKindToStr = lam x. switch x
-            case LRegAtom _ then "production"
-            case LRegInfix _ then "infix operator"
-            case LRegPrefix _ then "prefix operator"
-            case LRegPostfix _ then "postfix operator"
-            case LRegEnd _ then error "impossible"
-            end in
-          let genLabelToString = lam x. switch x
-            case TyTop x then join ["A ", nameGetStr x.v, "\n"]
-            case TyRegex {nt = nt, kind = LRegEnd _} then join ["Something coming after a ", nameGetStr nt.v, "\n"]
-            case TyRegex x then join ["A ", nameGetStr x.nt.v, " ", regexKindToStr x.kind, "\n"]
-            case TyGrouping x then snoc (multiHighlight (NoInfo ()) [x.left, x.right]) '\n'
-            case ProdTop x then snoc (simpleHighlight x.i) '\n'
-            case ProdInternal x then snoc (simpleHighlight x.info) '\n'
-            end in
-          let mkErr : (SpecSymbol Token TokenRepr () GenLabel, [GenLabel]) -> Res () = lam pair.
-            let msg = join
-              [ "LL1 conflict when seeing a ", symSpecToStr pair.0
-              , ", it might be the start of one of these:\n"
-              ] in
-            let msg = concat msg (join (map genLabelToString pair.1)) in
-            result.err (NoInfo (), msg)
-          in result.map (lam. ()) (result.mapM mkErr errs)
-        else result.ok ()
-      )
-  in
-
-  let table : Res Decl =
-    let f : Name -> GenOpResult -> [(Expr, Production GenLabel ())] -> Decl =
-      lam start. lam genOpResult. lam prods.
-        let getNt = lam x. match x with NtSpec nt then Some nt else None () in
-        let nts = join (map
-          (lam x: (Expr, Production GenLabel ()). match x with (_, x) in
-            cons x.nt (mapOption getNt x.rhs))
-          prods) in
-        let nts = setToSeq (setOfSeq nameCmp nts) in
-        let nts = map (lam name. nulet_ name (app_ (var_ "nameSym") (str_ (nameGetStr name)))) nts in
-        let prods = map (lam x. match x with (x, _) in x) prods in
-        let grammar = urecord_
-          [ ("start", nvar_ start)
-          , ("productions", genOpResult.wrapProductions (seq_ prods))
+  let productions : Res [Production] = result.mapM identity (deref productions) in
+  let parseFunctions : Res [Decl] =
+    let parseNormalName = nameNoSym (concat "parse" langName) in
+    let parseNormal : Res Decl =
+      let fileName = nameSym "filename" in
+      let contentName = nameSym "content" in
+      let tokenInfo : Res (Map TokenRepr {conIdent: Name, conArg: Type}) =
+        let res = mapValues typeMap in
+        let f = lam e.
+          match e with Right ti then
+            let f = lam ti.
+              ( ti.repr
+              , { conArg = tyrecord_ [("v", ti.bareTy), ("i", tycon_ "Info")]
+                , conIdent = ti.tokConstructor
+                }
+              )
+            in Some (result.map f ti)
+          else None () in
+        let res = result.mapM identity (mapOption f res) in
+        let res =
+          let eofInfo = {conIdent = nameNoSym "EOFTok", conArg = tyrecord_ [("info ", tycon_ "Info")]} in
+          result.map (cons (EOFRepr {}, eofInfo)) res in
+        result.map (mapFromSeq tokReprCmp) res
+      in
+      let table = result.bind3 start tokenInfo productions
+        (lam start. lam tokenInfo. lam productions.
+          let lookahead = 1 in
+          let def =
+            { entrypoint = start
+            , productions = productions
+            , initActionState = urecord_ [("errors", ref_ (seq_ [])), ("content", nvar_ contentName)]
+            } in
+          let addInfo = lam x. (NoInfo (), x) in
+          let args =
+            { k = lookahead
+            , tokenConTypes = tokenInfo
+            , syntaxDef = cfgRemoveDead def
+            , ignoreUnknown = true
+            } in
+          result.mapWE addInfo addInfo (lrCreateParseTable args)
+        ) in
+      let func = result.map (lrGenerateParser (lrDefaultGeneratorBindings ())) table in
+      let wrap = lam genOpResult. lam func.
+        let wrappedNextToken = ulam_ "x"
+          (app_ (recordproj_ "ok" (var_ "result"))
+            (app_ (var_ "nextToken") (var_ "x"))) in
+        let initLexerState = urecord_
+          [ ("pos", app_ (var_ "initPos") (nvar_ fileName))
+          , ("str", nvar_ contentName)
           ] in
-        let grammar = bindall_ (snoc nts grammar) in
-        let table = _uletin_ "target" (app_ (var_ "genParsingTable") grammar)
-          (match_ (var_ "target") (pcon_ "Right" (pvar_ "table"))
-            (var_ "table")
-            never_) in
-        use LetDeclAst in
-        use UseAst in
         DeclLet
-          { ident = nameNoSym "_table"
+          { ident = parseNormalName
           , tyAnnot = tyunknown_
           , tyBody = tyunknown_
           , body = TmUse
             { ident = composedParseFragmentName
-            , info = NoInfo ()
             , ty = tyunknown_
-            , inexpr =  table
+            , info = NoInfo ()
+            , inexpr = genOpResult.wrapProductions
+              (nulam_ fileName
+                (nulam_ contentName
+                  (appf2_ func initLexerState wrappedNextToken)))
             }
           , info = NoInfo ()
           }
-    in result.map3 f start genOpResult productions
+      in
+      result.map2 wrap genOpResult func
+    in
+    use BootParser in
+    let parse = parseMExprString {_defaultBootParserParseMExprStringArg () with allowFree = true} in
+    let parseExn : Decl = DeclLet
+      { ident = nameNoSym (join ["parse", langName, "Exn"])
+      , tyAnnot = tyunknown_
+      , tyBody = tyunknown_
+      , body = parse (strJoin "\n"
+        [ "lam filename. lam content."
+        , join ["match ", nameGetStr parseNormalName, " filename content with (ws, res) in"]
+        , "for_ warnings (lam x. printLn (infoWarningString info x.0 x.1));"
+        , "switch res"
+        , "case Left es then"
+        , "  for es (lam x. printLn (infoWarningString info x.0 x.1));"
+        , "  exit 1"
+        , "case Right res then res"
+        , "end"
+        ])
+      , info = NoInfo ()
+      } in
+    result.map (lam x. [x, parseExn]) parseNormal
   in
-
-  let parseFunctions : Res [Decl] =
-    let f = lam start.
-      use LetDeclAst in
-      use UseAst in
-      use BootParser in
-      let parse = parseMExprString {_defaultBootParserParseMExprStringArg () with allowFree = true} in
-      let body = parse
-        (strJoin "\n"
-          [ "  let config = {errors = ref [], content = content} in"
-          , "  let res = parseWithTable _table filename config content in"
-          , "  switch (res, deref config.errors)"
-          , "  case (Right dyn, []) then"
-          , "    match fromDyn dyn with (_, res) in Right res"
-          , "  case (Left err, errors) then"
-          , "    let err = ll1DefaultHighlight content (ll1ToErrorHighlightSpec err) in"
-          , "    Left (snoc errors err)"
-          , "  case (_, errors) then"
-          , "    Left errors"
-          , "  end"
-          ]) in
-      let parseStr = join ["parse", langName] in
-      let parseNormal = DeclLet
-        { ident = nameNoSym parseStr
-        , info = NoInfo ()
-        , tyAnnot = tyunknown_
-        , tyBody = tyunknown_
-        , body = ulam_ "filename"
-          (ulam_ "content"
-            (TmUse
-              { ident = composedParseFragmentName
-              , inexpr = body
-              , ty = tyunknown_
-              , info = NoInfo ()
-              }))
-        } in
-      let exnBody = parse
-        (strJoin "\n"
-          [ "lam filename. lam content."
-          , join ["  switch ", parseStr, " filename content"]
-          , "  case Left errors then"
-          , "    for_ errors (lam x. match x with (info, msg) in printLn (infoErrorString info msg));"
-          , "    exit 1"
-          , "  case Right file then file"
-          , "  end"
-          ]) in
-      let parseExn = DeclLet
-        { ident = nameNoSym (concat parseStr "Exn")
-        , info = NoInfo ()
-        , tyAnnot = tyunknown_
-        , tyBody = tyunknown_
-        , body = exnBody
-        } in
-      [parseNormal, parseExn]
-    in result.map f start
-  in
-
-  let tableAndFunctions : Res [Decl] =
-    result.map2 cons table parseFunctions
-  in
+  -- let parseFunctions : Res [Decl] =
+  --   let f = lam start.
+  --     use LetDeclAst in
+  --     use UseAst in
+  --     use BootParser in
+  --     let parse = parseMExprString {_defaultBootParserParseMExprStringArg () with allowFree = true} in
+  --     let body = parse
+  --       (strJoin "\n"
+  --         [ "  let config = {errors = ref [], content = content} in"
+  --         , "  let res = parseWithTable _table filename config content in"
+  --         , "  switch (res, deref config.errors)"
+  --         , "  case (Right dyn, []) then"
+  --         , "    match fromDyn dyn with (_, res) in Right res"
+  --         , "  case (Left err, errors) then"
+  --         , "    let err = ll1DefaultHighlight content (ll1ToErrorHighlightSpec err) in"
+  --         , "    Left (snoc errors err)"
+  --         , "  case (_, errors) then"
+  --         , "    Left errors"
+  --         , "  end"
+  --         ]) in
+  --     let parseStr = join ["parse", langName] in
+  --     let parseNormal = DeclLet
+  --       { ident = nameNoSym parseStr
+  --       , info = NoInfo ()
+  --       , tyAnnot = tyunknown_
+  --       , tyBody = tyunknown_
+  --       , body = ulam_ "filename"
+  --         (ulam_ "content"
+  --           (TmUse
+  --             { ident = composedParseFragmentName
+  --             , inexpr = body
+  --             , ty = tyunknown_
+  --             , info = NoInfo ()
+  --             }))
+  --       } in
+  --     let exnBody = parse
+  --       (strJoin "\n"
+  --         [ "lam filename. lam content."
+  --         , join ["  switch ", parseStr, " filename content"]
+  --         , "  case Left errors then"
+  --         , "    for_ errors (lam x. match x with (info, msg) in printLn (infoErrorString info msg));"
+  --         , "    exit 1"
+  --         , "  case Right file then file"
+  --         , "  end"
+  --         ]) in
+  --     let parseExn = DeclLet
+  --       { ident = nameNoSym (concat parseStr "Exn")
+  --       , info = NoInfo ()
+  --       , tyAnnot = tyunknown_
+  --       , tyBody = tyunknown_
+  --       , body = exnBody
+  --       } in
+  --     [parseNormal, parseExn]
+  --   in result.map f start
+  -- in
 
   -- NOTE(vipa, 2022-03-21): Generate the actual language fragments
-  let generated: Res [Decl] = result.bind5 constructors badConstructors requestedFieldAccessors genOpResult tableAndFunctions
-    (lam constructors : [ConstructorInfo]. lam badConstructors. lam requestedFieldAccessors. lam genOpResult : GenOpResult. lam tableAndFunctions.
+  let generated: Res [Decl] = result.bind5 constructors badConstructors requestedFieldAccessors genOpResult parseFunctions
+    (lam constructors : [ConstructorInfo]. lam badConstructors. lam requestedFieldAccessors. lam genOpResult : GenOpResult. lam parseFunctions.
       let genInput =
         { baseName = nameSym (concat langName "BaseAst")
         , composedName = Some composedAstFragmentName
@@ -1939,11 +1883,11 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         , map (lam x. DeclInclude {path = x.path.v, info = x.info}) includes
         , mkLanguages genInput
         , genOpResult.fragments
-        , tableAndFunctions
+        , parseFunctions
         ])
     ) in
 
-  match result.consume (result.withAnnotations ll1Error (result.withAnnotations allResolved generated)) with (warnings, res) in
+  match result.consume (result.withAnnotations allResolved generated) with (warnings, res) in
   for_ warnings (lam x. match x with (info, msg) in printLn (infoWarningString info msg));
   switch res
   case Left errors then

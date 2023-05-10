@@ -164,9 +164,14 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
   --   A result type containing the generated parse table on success. Otherwise
   --   a list of errors.
   -/
-  sem lrCreateParseTable: Int -> Map TokenRepr {conIdent: Name, conArg: Type} -> SyntaxDef -> Result String String LRParseTable
-  sem lrCreateParseTable k tokenConTypes =
-  | syntaxDef ->
+  sem lrCreateParseTable :
+    { k : Int
+    , tokenConTypes : Map TokenRepr {conIdent: Name, conArg: Type}
+    , syntaxDef : SyntaxDef
+    , ignoreUnknown : Bool
+    } -> Result String String LRParseTable
+  sem lrCreateParseTable =
+  | {k = k, tokenConTypes = tokenConTypes, syntaxDef = syntaxDef, ignoreUnknown = ignoreUnknown} ->
     let nonTerminalTypesResult = foldl (lam acc: ([Name], Map Name Type). lam prod: Production.
       recursive let getFinalType = lam ty: Type.
         match ty with TyArrow r then getFinalType r.to else ty
@@ -205,26 +210,32 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         switch term
         case NonTerminal n then
           match mapLookup n nonTerminalTypes with Some ntType then
-            if neqi 0 (cmpTypeH (ty, ntType))
-              then
-                use MExprPrettyPrint in
-                let env = pprintEnvEmpty in
-                Some (join [
-                  "Type mismatch for non-terminal \"", nameGetStr n, "\", between ",
-                  (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env ntType).1, "."])
-              else None ()
+            let mismatch = if ignoreUnknown
+              then match (ty, ntType) with (TyUnknown _, _) | (_, TyUnknown _) then false else true
+              else true in
+            let mismatch = if mismatch then neqi 0 (cmpTypeH (ty, ntType)) else false in
+            if mismatch then
+              use MExprPrettyPrint in
+              let env = pprintEnvEmpty in
+              Some (join [
+                "Type mismatch for non-terminal \"", nameGetStr n, "\", between ",
+                (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env ntType).1, "."])
+            else None ()
           else
             Some (join ["Unrecognized non-terminal \"", nameGetStr n, "\""])
         case Terminal t then
           -- NOTE(johnwikman, 2022-01-20): Maybe we want more than one type for tokens?
           match mapLookup t tokenConTypes with Some tokCon then
-            if neqi 0 (cmpTypeH (ty, tokCon.conArg))
-              then
-                use MExprPrettyPrint in
-                let env = pprintEnvEmpty in
-                Some (join ["Type mismatch for token ", tokReprToStr t, ", between ",
-                (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env tokCon.conArg).1, "."])
-              else None ()
+            let mismatch = if ignoreUnknown
+              then match (ty, tokCon.conArg) with (TyUnknown _, _) | (_, TyUnknown _) then false else true
+              else true in
+            let mismatch = if mismatch then neqi 0 (cmpTypeH (ty, tokCon.conArg)) else false in
+            if mismatch then
+              use MExprPrettyPrint in
+              let env = pprintEnvEmpty in
+              Some (join ["Type mismatch for token ", tokReprToStr t, ", between ",
+              (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env tokCon.conArg).1, "."])
+            else None ()
           else
             Some (join ["could not find a type for token ", tokReprToStr t])
         end
@@ -648,7 +659,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         stlAcc
     ) stackTypeLabel table.tokenConTypes in
 
-    let stackRecordExpr = 
+    let stackRecordExpr =
       let tytms = (mapFoldWithKey (lam acc: ([(String, Type)], [(String, Expr)]). lam ty: Type. lam label: String.
         match acc with (tys, tms) in
         let tys = cons (label, (tyseq_ ty)) tys in

@@ -248,6 +248,17 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     let visited = iterate idxQueue visited in
     {syntaxDef with productions = filter (lam prod. setMem prod.nt visited) syntaxDef.productions}
 
+  sem cfgRemoveDead : SyntaxDef -> SyntaxDef
+  sem cfgRemoveDead = | syntaxDef ->
+    let termIsLive = lam liveNts. lam term.
+      match term with NonTerminal n then setMem n liveNts else true in
+    recursive let work = lam productions.
+      let nts = foldl (lam acc. lam prod. setInsert prod.nt acc) (setEmpty nameCmp) productions in
+      let liveProds = filter (lam prod. forAll (termIsLive nts) prod.terms) productions in
+      if eqi (length productions) (length liveProds)
+      then productions
+      else work liveProds
+    in { syntaxDef with productions = work syntaxDef.productions }
 
   -- A stronger version of cfgRemoveUnreachable. Also removes any productions
   -- that contain non-terminals without any production.
@@ -259,6 +270,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
   sem cfgRemoveUnparsable =
   | syntaxDef ->
     recursive let convergenceLoop = lam syntaxDef: SyntaxDef.
+      printLn "In convergence loop";
       let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production.
         mapInsertWith concat prod.nt [i] m
       ) (mapEmpty nameCmp) syntaxDef.productions in
@@ -298,7 +310,9 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
       else
         syntaxDef
     in
-    convergenceLoop syntaxDef
+    let res = convergenceLoop syntaxDef in
+    printLn "post convergence loop";
+    res
 end
 
 

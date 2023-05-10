@@ -21,17 +21,18 @@ type NextTokenResult = {token : Token, lit : String, info : Info, stream : Strea
 -- Base language for parsing tokens preceeded by WSAC
 lang TokenParser = WSACParser + TokenReprBase
   syn Token =
-  sem nextToken /- : Stream -> NextTokenResult -/ =
+  sem nextToken : Stream -> NextTokenResult
+  sem nextToken =
   | stream ->
     let stream: Stream = stream in
     let stream: Stream = eatWSAC stream.pos stream.str in
     parseToken stream.pos stream.str
 
-  sem parseToken (pos : Pos) /- : String -> NextTokenResult -/ =
-  sem tokKindEq (tokRepr : TokenRepr) /- : Token -> Bool -/ =
-  sem tokInfo /- : Token -> Info -/ =
-  sem tokToStr /- : Token -> String -/ =
-  sem tokToRepr /- : Token -> TokenRepr -/ =
+  sem parseToken : Pos -> String -> NextTokenResult
+  sem tokKindEq : TokenRepr -> Token -> Bool
+  sem tokInfo : Token -> Info
+  sem tokToStr : Token -> String
+  sem tokToRepr : Token -> TokenRepr
 end
 
 -- Eats whitespace
