@@ -198,7 +198,7 @@ let _map2
       ResultErr (_mergeErrors (_asError a) (_asError b))
 
 -- NOTE(vipa, 2022-01-21): Poor man's property based testing, or
--- rather exhaustive testing for small number of posibilities
+-- rather exhaustive testing for small number of possibilities
 utest
   let semantics = lam f. lam a. lam b. _apply (_map f a) b in
   let errs = [_err 1, _err 2, _err 3] in

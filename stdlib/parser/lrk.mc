@@ -168,10 +168,9 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     { k : Int
     , tokenConTypes : Map TokenRepr {conIdent: Name, conArg: Type}
     , syntaxDef : SyntaxDef
-    , ignoreUnknown : Bool
     } -> Result String String LRParseTable
   sem lrCreateParseTable =
-  | {k = k, tokenConTypes = tokenConTypes, syntaxDef = syntaxDef, ignoreUnknown = ignoreUnknown} ->
+  | {k = k, tokenConTypes = tokenConTypes, syntaxDef = syntaxDef} ->
     let nonTerminalTypesResult = foldl (lam acc: ([Name], Map Name Type). lam prod: Production.
       recursive let getFinalType = lam ty: Type.
         match ty with TyArrow r then getFinalType r.to else ty
@@ -210,10 +209,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         switch term
         case NonTerminal n then
           match mapLookup n nonTerminalTypes with Some ntType then
-            let mismatch = if ignoreUnknown
-              then match (ty, ntType) with (TyUnknown _, _) | (_, TyUnknown _) then false else true
-              else true in
-            let mismatch = if mismatch then neqi 0 (cmpTypeH (ty, ntType)) else false in
+            let mismatch = neqi 0 (cmpTypeH (ty, ntType)) in
             if mismatch then
               use MExprPrettyPrint in
               let env = pprintEnvEmpty in
@@ -226,10 +222,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         case Terminal t then
           -- NOTE(johnwikman, 2022-01-20): Maybe we want more than one type for tokens?
           match mapLookup t tokenConTypes with Some tokCon then
-            let mismatch = if ignoreUnknown
-              then match (ty, tokCon.conArg) with (TyUnknown _, _) | (_, TyUnknown _) then false else true
-              else true in
-            let mismatch = if mismatch then neqi 0 (cmpTypeH (ty, tokCon.conArg)) else false in
+            let mismatch = neqi 0 (cmpTypeH (ty, tokCon.conArg)) in
             if mismatch then
               use MExprPrettyPrint in
               let env = pprintEnvEmpty in

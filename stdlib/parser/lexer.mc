@@ -18,15 +18,26 @@ lang WSACParser
   | x -> {str = x, pos = p}
 end
 
-recursive let advancePosStr : Pos -> String -> Pos = lam pos. lam str.
-  switch str
-  case [] then pos
-  case "\n" ++ str then advancePosStr (advanceRow pos 1) str
-  case "\t" ++ str then advancePosStr (advanceCol pos tabSpace) str
-  case "\r" ++ str then advancePosStr pos str
-  case [_] ++ str then advancePosStr (advanceCol pos 1) str
-  end
-end
+let stringToPosDelta : String -> (Int, Int) = lam str.
+  recursive let work = lam rowDelta. lam colDelta. lam str.
+    switch str
+    case [] then (rowDelta, colDelta)
+    case "\n" ++ str then work (addi rowDelta 1) 0 str
+    case "\t" ++ str then work rowDelta (addi colDelta tabSpace) str
+    case "\r" ++ str then work rowDelta colDelta str
+    case [_] ++ str then work rowDelta (addi colDelta 1) str
+    end
+  in work 0 0 str
+
+let mkAdvancePosByStr
+  : all e. (e -> Int -> e) -> (e -> Int -> e) -> e -> String -> e
+  = lam advRow. lam advCol. lam pos. lam str.
+    match stringToPosDelta str with (rows, cols) in
+    let pos = match rows with 0 then pos else advRow pos rows in
+    match cols with 0 then pos else advCol pos cols
+
+let advancePosStr : Pos -> String -> Pos =
+  mkAdvancePosByStr advanceRow advanceCol
 
 -- Base language for parsing tokens preceeded by WSAC
 lang TokenParser = WSACParser + TokenReprBase

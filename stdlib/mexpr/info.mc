@@ -14,6 +14,11 @@ let testinfo_: Info = Info {filename = "testinfo_", row1 = 1, col1 = 5, row2 = 1
 -- Data structure for a positon value
 type Pos = {filename: String, row: Int, col: Int}
 
+let posCmp : Pos -> Pos -> Int = lam a. lam b.
+  let res = subi a.row b.row in
+  if neqi res 0 then res else
+  subi a.col b.col
+
 -- Crate init position, start of file
 let initPos : String -> Pos = lam filename.
   {filename = filename, row = 1, col = 0}

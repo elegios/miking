@@ -50,6 +50,7 @@ type SynDesc =
   , grouping : Option (String, String)
   , precedence : Map (Name, Name) Ordering
   , baseFragmentName : Name -- The fragment declaring the normal `syn`
+  , synName : Name -- The name of the `syn` containing all operators for this `syn`
   }
 type FieldLabels =
   { info : String, terms : String }
@@ -57,8 +58,7 @@ type GenOpInput =
   { fieldLabels : FieldLabels
   , syns : Map Name SynDesc
   , namingScheme :
-    { synName : String -> String -- e.g., `Expr` -> `ExprOp`
-    , opBaseLangName : String -> String -- e.g., `ExprOp` -> `ExprOpBase`
+    { opBaseLangName : String -> String -- e.g., `ExprOp` -> `ExprOpBase`
     }
   -- , mkSynName : String -> String -- namingScheme.synName
   -- , mkSynAstBaseName : String -> String -- This should be provided as a `Name` directly instead
@@ -73,8 +73,8 @@ type InternalSynDesc =
   , grouping : Option (String, String)
   , precedence : Map (Name, Name) Ordering
   , baseFragmentName : Name -- The fragment declaring the normal `syn`
-  -- The names below are newly generated and not used outside of gen-op-ast (except indirectly).
   , synName : Name -- The `Name` of the type that contains all operators for this syn
+  -- The names below are newly generated and not used outside of gen-op-ast (except indirectly).
   , baseOpFragmentName : Name -- The base fragment declaring the `syn` for the operators
   , functions :
     { topAllowed : Name
@@ -649,12 +649,12 @@ lang MkOpLanguages = GenOpAstLang
   sem mkOpLanguages = | config ->
     let synDescs : Map Name InternalSynDesc = mapMapWithKey
       (lam original. lam desc.
-        let synStr = config.namingScheme.synName (nameGetStr original) in
+        let synStr = nameGetStr desc.synName in
         { bad = desc.bad
         , grouping = desc.grouping
         , precedence = desc.precedence
         , baseFragmentName = desc.baseFragmentName
-        , synName = nameSym synStr
+        , synName = desc.synName
         , baseOpFragmentName = nameSym (config.namingScheme.opBaseLangName (nameGetStr original))
         , functions =
           { topAllowed = nameSym (concat "topAllowed_" synStr)
