@@ -6,29 +6,46 @@ include "string.mc"
 include "seq.mc"
 include "mexpr/info.mc"
 include "grammar.mc"
+include "result.mc"
 
 let tabSpace = 2
 
 -- Base language for whitespace and comments (WSAC) parsing
 lang WSACParser
-  sem eatWSAC (p : Pos) =
+  type Stream = {pos : Pos, str : String}
+  sem eatWSAC : Pos -> String -> Stream
+  sem eatWSAC p =
   | x -> {str = x, pos = p}
 end
 
-type Stream = {pos : Pos, str : String}
-type NextTokenResult = {token : Token, lit : String, info : Info, stream : Stream}
+recursive let advancePosStr : Pos -> String -> Pos = lam pos. lam str.
+  switch str
+  case [] then pos
+  case "\n" ++ str then advancePosStr (advanceRow pos 1) str
+  case "\t" ++ str then advancePosStr (advanceCol pos tabSpace) str
+  case "\r" ++ str then advancePosStr pos str
+  case [_] ++ str then advancePosStr (advanceCol pos 1) str
+  end
+end
 
 -- Base language for parsing tokens preceeded by WSAC
 lang TokenParser = WSACParser + TokenReprBase
+  type NextTokenResult = {token : Token, stream : Stream}
+
+  type LexError = (Pos, String)
+  type LexRes a = Result LexError LexError a
+
   syn Token =
-  sem nextToken : Stream -> NextTokenResult
+  sem nextToken : Stream -> LexRes NextTokenResult
   sem nextToken =
   | stream ->
     let stream: Stream = stream in
     let stream: Stream = eatWSAC stream.pos stream.str in
     parseToken stream.pos stream.str
 
-  sem parseToken : Pos -> String -> NextTokenResult
+  sem parseToken : Pos -> String -> LexRes NextTokenResult
+  sem parseToken pos =
+  | _ -> result.err (pos, "Unexpected character")
   sem tokKindEq : TokenRepr -> Token -> Bool
   sem tokInfo : Token -> Info
   sem tokToStr : Token -> String
@@ -81,10 +98,10 @@ lang EOFTokenParser = TokenParser + TokenReprEOF
   syn Token =
   | EOFTok {info : Info}
 
-  sem parseToken (pos : Pos) =
+  sem parseToken pos =
   | [] ->
     let info = makeInfo pos pos in
-    {token = EOFTok {info = info}, lit = "", info = info, stream = {pos = pos, str = []}}
+    result.ok {token = EOFTok {info = info}, stream = {pos = pos, str = []}}
 
   sem tokKindEq (tokRepr : TokenRepr) =
   | EOFTok _ -> match tokRepr with EOFRepr _ then true else false
@@ -136,9 +153,8 @@ lang LIdentTokenParser = TokenParser
     then
       let val = cons c val in
       let info = makeInfo pos pos2 in
+      result.ok
       { token = LIdentTok {info = info, val = val}
-      , lit = val
-      , info = info
       , stream = {pos = pos2, str = str}
       }
     else never
@@ -173,9 +189,8 @@ lang UIdentTokenParser = TokenParser
     then
       let val = cons c val in
       let info = makeInfo pos pos2 in
+      result.ok
       { token = UIdentTok {info = info, val = val}
-      , lit = val
-      , info = info
       , stream = {pos = pos2, str = str}
       }
     else never
@@ -234,9 +249,8 @@ lang UIntTokenParser = TokenParser
   sem parseIntCont (acc : String) (pos1 : Pos) (pos2 : Pos) =
   | str ->
     let info = makeInfo pos1 pos2 in
+    result.ok
     { token = IntTok {info = info, val = string2int acc}
-    , lit = ""
-    , info = info
     , stream = {pos = pos2, str = str}
     }
 
@@ -307,17 +321,15 @@ lang UFloatTokenParser = UIntTokenParser
     match parseFloatExponent (advanceCol pos2 1) (tail str) with {val = val, pos = pos2, str = str}
     then
       let info = makeInfo pos1 pos2 in
+      result.ok
       { token = FloatTok {info = info, val = string2float (join [acc, "e", val])}
-      , lit = ""
-      , info = info
       , stream = {pos = pos2, str = str}
       }
     else never
   | str ->
     let info = makeInfo pos1 pos2 in
+    result.ok
     { token = FloatTok {info = info, val = string2float acc}
-    , lit = ""
-    , info = info
     , stream = {pos = pos2, str = str}
     }
 
@@ -370,9 +382,8 @@ lang OperatorTokenParser = TokenParser
     then
       let val = cons c val in
       let info = makeInfo pos stream.pos in
+      result.ok
       { token = OperatorTok {info = info, val = val}
-      , lit = val
-      , info = info
       , stream = stream}
     else never
 
@@ -412,27 +423,27 @@ lang BracketTokenParser = TokenParser
   | "(" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = LParenTok {info = info}, lit = "(", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = LParenTok {info = info}, stream = {pos = pos2, str = str}}
   | ")" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = RParenTok {info = info}, lit = ")", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = RParenTok {info = info}, stream = {pos = pos2, str = str}}
   | "[" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = LBracketTok {info = info}, lit = "[", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = LBracketTok {info = info}, stream = {pos = pos2, str = str}}
   | "]" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = RBracketTok {info = info}, lit = "]", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = RBracketTok {info = info}, stream = {pos = pos2, str = str}}
   | "{" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = LBraceTok {info = info}, lit = "{", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = LBraceTok {info = info}, stream = {pos = pos2, str = str}}
   | "}" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = RBraceTok {info = info}, lit = "}", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = RBraceTok {info = info}, stream = {pos = pos2, str = str}}
 
   sem tokKindEq (tokRepr : TokenRepr) =
   | LParenTok _ -> match tokRepr with LParenRepr _ then true else false
@@ -485,7 +496,7 @@ lang SemiTokenParser = TokenParser
   | ";" ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = SemiTok {info = info}, lit = ";", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = SemiTok {info = info}, stream = {pos = pos2, str = str}}
 
   sem tokKindEq (tokRepr : TokenRepr) =
   | SemiTok _ -> match tokRepr with SemiRepr _ then true else false
@@ -513,7 +524,7 @@ lang CommaTokenParser = TokenParser
   | "," ++ str ->
     let pos2 = advanceCol pos 1 in
     let info = makeInfo pos pos2 in
-    {token = CommaTok {info = info}, lit = ",", info = info, stream = {pos = pos2, str = str}}
+    result.ok {token = CommaTok {info = info}, stream = {pos = pos2, str = str}}
 
   sem tokKindEq (tokRepr : TokenRepr) =
   | CommaTok _ -> match tokRepr with CommaRepr _ then true else false
@@ -565,9 +576,8 @@ lang StringTokenParser = TokenParser
       else never
     in match work "" (advanceCol pos 1) str with {val = val, pos = pos2, str = str} then
       let info = makeInfo pos pos2 in
+      result.ok
       { token = StringTok {info = info, val = val}
-      , lit = ""
-      , info = info
       , stream = {pos = pos2, str = str}
       }
     else never
@@ -600,9 +610,8 @@ lang CharTokenParser = TokenParser
       match str with "'" ++ str then
         let pos2 = advanceCol pos2 1 in
         let info = makeInfo pos pos2 in
+        result.ok
         { token = CharTok {info = info, val = val}
-        , lit = ""
-        , info = info
         , stream = {pos = pos2, str = str}
         }
       else posErrorExit pos "Expected ' to close character literal."
@@ -642,9 +651,8 @@ lang HashStringTokenParser = TokenParser
           else never
         in match work "" (advanceCol pos2 1) str with {val = val, pos = pos2, str = str} then
           let info = makeInfo pos pos2 in
+          result.ok
           { token = HashStringTok {info = info, hash = hash, val = val}
-          , lit = ""
-          , info = info
           , stream = {pos = pos2, str = str}
           }
         else never
@@ -714,9 +722,8 @@ let start = initPos "file" in
 let parse = lam str. nextToken {pos = start, str = str} in
 
 utest parse " --foo \n  bar " with
+  result.ok
   { token = LIdentTok {val = "bar", info = infoVal "file" 2 2 2 5}
-  , lit = "bar"
-  , info = infoVal "file" 2 2 2 5
   , stream = {pos = posVal "file" 2 5 , str = " "}
   } in
 

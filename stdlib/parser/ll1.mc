@@ -51,6 +51,9 @@ con UnexpectedToken : all tok. all repr. all state. all prodLabel.
   , found : ParsedSymbol tok
   , expected : SpecSymbol tok repr state prodLabel
   } -> ParseError tok repr state prodLabel
+con BadToken : all tok. all repr. all state. all prodLabel.
+  { err : (Pos, String)
+  } -> ParseError tok repr state prodLabel
 
 -- NOTE(vipa, 2021-02-05): I want to create types that refer to
 -- `Token`, which lives in a language fragment. There is no top-level
@@ -86,10 +89,7 @@ lang ParserSpec = ParserBase
   sem ntSym =
   | nt -> NtSpec nt
   sem litSym =
-  | str ->
-    let res: NextTokenResult = nextToken {str = str, pos = posVal "" 1 1} in
-    match (res.stream.str, res.lit) with ("", !"") then LitSpec {lit = str}
-    else error (join ["A literal token does not lex as a single token: \"", res.stream.str, "\""])
+  | str -> LitSpec {lit = str}
   sem tokSym =
   | repr -> TokSpec repr
 end
@@ -421,11 +421,32 @@ lang LL1Parser = ParserGeneration + ParserConcrete
     match table with {start = start, lits = lits, firstOfRhs = firstOfRhs} in
     let lastOpen = ref (None ()) in
     let getNextToken = lam stream.
-      let res: NextTokenResult = nextToken stream in
-        -- OPT(vipa, 2021-02-08): Could use the hash of the lit to maybe optimize this, either by using a hashmap, or by first checking against the hash in a bloom filter or something like that
-      if if (eqString "" res.lit) then true else not (mapMem res.lit lits)
-        then {token = TokParsed res.token, stream = res.stream}
-        else {token = LitParsed {lit = res.lit, info = res.info}, stream = res.stream} in
+      let stream = eatWSAC stream.pos stream.str in
+      let lit =
+        let pickLongest = lam acc. lam lit. lam.
+          if isPrefix eqc lit stream.str then
+            let res = optionMapOr lit (lam other. if gti (length lit) (length other) then lit else other) acc in
+            Some res
+          else acc in
+        mapFoldWithKey pickLongest (None ()) lits in
+      let res = (result.consume (parseToken stream.pos stream.str)).1 in
+      match (res, lit) with (Left ([(pos, msg)] ++ _), None _) then posErrorExit pos msg else
+      let res = eitherGetRight res in
+      let res = optionMap
+        (lam res. { token = TokParsed res.token, stream = res.stream })
+        res in
+      let lit = optionMap
+        (lam lit.
+          let endPos = advancePosStr stream.pos lit in
+          let info = makeInfo stream.pos endPos in
+          { token = LitParsed {lit = lit, info = info}
+          , stream = {pos = endPos, str = subsequence stream.str (length lit) (subi (length stream.str) 1)}
+          })
+        lit in
+      optionZipWithOrElse (lam. optionGetOrElse (lam. never) (optionXor res lit))
+        (lam res. lam lit. if leqi (length lit.stream.str) (length res.stream.str) then lit else res)
+        res
+        lit in
     recursive
       let openNt = lam nt. lam token. lam stack. lam stream.
         modref lastOpen (Some (nt.nt, token, stack));
