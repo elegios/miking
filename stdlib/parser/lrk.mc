@@ -29,36 +29,37 @@ include "grammar.mc"
 include "lexer.mc"
 
 lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
-  type LRStateItem = {
+  type LRStateItem label = {
     nt: Name,
     terms: [Term],
     stackPointer: Int,
     lookahead: [TokenRepr],
-    prodIdx: Int -- index of the rule that this item originates from
+    prodIdx: Int, -- index of the rule that this item originates from
+    prodLabel: label
   }
 
-  type LRState = Set LRStateItem
+  type LRState label = Set (LRStateItem label)
 
-  type LRParseTable = {
+  type LRParseTable label = {
     -- k_lookahead as in LR(k)
     k_lookahead: Int,
     -- Index of the initial LR state
     entrypointIdx: Int,
     entrypointProdIdx: Int,
     -- The original syntax definition
-    syntaxDef: SyntaxDef,
+    syntaxDef: SyntaxDef label,
     -- Types for non-terminal symbols and tokens
     nonTerminalTypes: Map Name Type,
     tokenConTypes: Map TokenRepr {conIdent: Name, conArg: Type},
     -- The generated LR states, shifts, gotos, and reductions
-    states: [Set LRStateItem],
+    states: [Set (LRStateItem label)],
     shifts: Map Int [{lookahead: [TokenRepr], toIdx: Int}],
     gotos: Map Int [{nt: Name, toIdx: Int}],
-    reductions: Map Int [{lookahead: [TokenRepr], prodIdx: Int}]
+    reductions: Map Int [{lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}]
   }
 
 
-  sem lrStateItemCmp2 : (LRStateItem, LRStateItem) -> Int
+  sem lrStateItemCmp2 : all label. (LRStateItem label, LRStateItem label) -> Int
   sem lrStateItemCmp2 =
   | (lhs, rhs) ->
     let cName = nameCmp lhs.nt rhs.nt in
@@ -73,7 +74,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     cRuleIdx
 
 
-  sem lrStateItemCmp : LRStateItem -> LRStateItem -> Int
+  sem lrStateItemCmp : all label. LRStateItem label -> LRStateItem label -> Int
   sem lrStateItemCmp lhs =
   | rhs -> lrStateItemCmp2 (lhs, rhs)
 
@@ -87,29 +88,30 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
   --           I <- I U {(X -> .y, W)}
   --   until I does not change
   --   return I
-  sem lrClosure: Int -> SyntaxDef -> Map Term (Set [TokenRepr]) -> Set LRStateItem -> Set LRStateItem
+  sem lrClosure: all label. Int -> SyntaxDef label -> Map Term (Set [TokenRepr]) -> Set (LRStateItem label) -> Set (LRStateItem label)
   sem lrClosure k syntaxDef firstMap =
   | inSet ->
     -- OPT(johnwikman, 2023-01-14): This performs a bunch of unnecessary checks
     -- on new iterations, as it only needs to check the latest items that were
     -- added to the set. But to keep things simple initially, I didn't bother
     -- to implement this optimization.
-    recursive let iterate = lam inSet: Set LRStateItem.
-      let resultSet = setFold (lam accSet: Set LRStateItem. lam item: LRStateItem.
+    recursive let iterate = lam inSet: Set (LRStateItem label).
+      let resultSet = setFold (lam accSet: Set (LRStateItem label). lam item: (LRStateItem label).
         match subsequence item.terms item.stackPointer (length item.terms)
         with [NonTerminal x] ++ b then
           let bL: [Term] = concat b (map (lam t. Terminal t) item.lookahead) in
           let firstK_bL: Set [TokenRepr] = cfgComposeFirst k firstMap bL in
-          foldli (lam accSet: Set LRStateItem. lam prodIdx: Int. lam prod: Production.
+          foldli (lam accSet: Set (LRStateItem label). lam prodIdx: Int. lam prod: Production label.
             if nameEq x prod.nt then
               -- Process this production
-              setFold (lam accSet: Set LRStateItem. lam w: [TokenRepr].
-                let newItem: LRStateItem = {
+              setFold (lam accSet: Set (LRStateItem label). lam w: [TokenRepr].
+                let newItem: LRStateItem label = {
                   nt = x,
                   terms = prod.terms,
                   stackPointer = 0,
                   lookahead = w,
-                  prodIdx = prodIdx
+                  prodIdx = prodIdx,
+                  prodLabel = prod.label
                 } in
                 setInsert newItem accSet
               ) accSet firstK_bL
@@ -132,10 +134,10 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
   --   for any item (A -> a.Xb, L) in I
   --     add (A -> aX.b, L) to J
   --   return Closure(J)
-  sem lrGoto: Int -> SyntaxDef -> Map Term (Set [TokenRepr]) -> Set LRStateItem -> Term -> Set LRStateItem
+  sem lrGoto: all label. Int -> SyntaxDef label -> Map Term (Set [TokenRepr]) -> Set (LRStateItem label) -> Term -> Set (LRStateItem label)
   sem lrGoto k syntaxDef firstMap inSet =
   | x ->
-    let j = setFold (lam jAcc: Set LRStateItem. lam item: LRStateItem.
+    let j = setFold (lam jAcc: Set (LRStateItem label). lam item: LRStateItem label.
       if lti item.stackPointer (length item.terms) then
         if cfgTermEq x (get item.terms item.stackPointer) then
           setInsert {item with stackPointer = addi item.stackPointer 1} jAcc
@@ -146,6 +148,21 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     ) (setEmpty lrStateItemCmp) inSet in
     lrClosure k syntaxDef firstMap j
 
+
+  syn LRError label =
+  | ConflictingProductionTypes {nt : Name, productions : Map Type [label] }
+  | ActionArgLengthMismatch {production : label, expected : Int, actual : Int}
+  | TermTypeMismatch {production : label, term : Term, termTy : Type, actionArgTy : Type}
+  | UndefinedTerm {production : label, term : Term}
+  | MissingEOFTokenType ()
+  | FirstSetUndefined {term : Term}
+  -- TODO(vipa, 2023-08-31): The conflicts should have more
+  -- information, things like a (shortest) stack state in which we can
+  -- see the conflict (stack state should probably have type
+  -- [TokenRepr]). See Menhir's error messages for inspiration. It's
+  -- also not impossible that `shiftAllowed` should be a collection of
+  -- productions (labels) that cause the shift to be allowed.
+  | LRConflict {lookahead : [TokenRepr], reducingProductions : [label], shiftAllowed : Bool}
 
   /-
   -- Generate the LR(k) parse table.
@@ -164,33 +181,41 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
   --   A result type containing the generated parse table on success. Otherwise
   --   a list of errors.
   -/
-  sem lrCreateParseTable :
+  sem lrCreateParseTable : all warn. all label.
     { k : Int
     , tokenConTypes : Map TokenRepr {conIdent: Name, conArg: Type}
-    , syntaxDef : SyntaxDef
-    } -> Result String String LRParseTable
+    , syntaxDef : SyntaxDef label
+    } -> Result warn (LRError label) (LRParseTable label)
   sem lrCreateParseTable =
   | {k = k, tokenConTypes = tokenConTypes, syntaxDef = syntaxDef} ->
-    let nonTerminalTypesResult = foldl (lam acc: ([Name], Map Name Type). lam prod: Production.
-      recursive let getFinalType = lam ty: Type.
-        match ty with TyArrow r then getFinalType r.to else ty
-      in
-      match acc with (errs, mapAcc) in
-      match mapLookup prod.nt mapAcc with Some prevTy then
-        if neqi 0 (cmpTypeH (prevTy, getFinalType (tyTm prod.action))) then
-          (snoc errs prod.nt, mapAcc)
-        else
-          acc
-      else
-        (errs, mapInsert prod.nt (getFinalType (tyTm prod.action)) mapAcc)
-    ) ([], mapEmpty nameCmp) syntaxDef.productions in
-    match nonTerminalTypesResult with (([_] ++ _) & errs, _) then
-      result.err (join ["Conflicting types for the non-terminal(s): ", strJoin ", " (map nameGetStr (distinct nameEq errs))])
-    else match nonTerminalTypesResult with (_, nonTerminalTypes) in
+    type Res a = Result warn (LRError label) a in
+    let nonTerminalTypes : Map Name (Map Type [label]) =
+      let getFinalType = lam tm.
+        recursive let work = lam ty.
+          match ty with TyArrow r then work r.to else ty
+        in work (tyTm tm) in
+      let empty = mapEmpty cmpType in
+      let single = lam k. lam v. mapInsert k v empty in
+      foldl (lam acc. lam prod. mapInsertWith (mapUnionWith concat) prod.nt (single (getFinalType prod.action) [prod.label]) acc)
+        (mapEmpty nameCmp)
+        syntaxDef.productions in
+    let nonTerminalTypes : (Res (), Map Name Type) =
+      mapMapAccum
+        (lam res. lam nt. lam tys.
+          let res = if eqi 1 (mapSize tys)
+            then res
+            else result.withAnnotations
+              (result.err (ConflictingProductionTypes {nt = nt, productions = tys}))
+              res
+          in (res, optionMapOrElse (lam. never) (lam x. x.0) (mapChoose tys)))
+        (result.ok ())
+        nonTerminalTypes in
+    match nonTerminalTypes with (nonTermRes, nonTerminalTypes) in
+    match result.toOption nonTermRes with None _ then result.map (lam. never) nonTermRes else
 
     -- Type-check the type signature, make sure the production function
     -- correspond to the types of the symbols that it consumes
-    let ruleArgTypesResult = foldli (lam errs: [String]. lam prodIdx: Int. lam prod: Production.
+    let ruleArgTypesResult = foldli (lam errs. lam prodIdx: Int. lam prod: Production label.
       recursive let getArgTypes = lam acc: [Type]. lam ty: Type.
         match ty with TyArrow r
           then getArgTypes (snoc acc r.from) r.to
@@ -198,11 +223,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
       in
       let argtypes = getArgTypes [] (tyTm prod.action) in
       if neqi (length argtypes) (addi 1 (length prod.terms)) then
-        snoc errs (join [
-          "Argument type mismatch for production ", int2string prodIdx, ". Got ",
-          int2string (length argtypes), " argument in production function, expected ",
-          int2string (addi 1 (length prod.terms)), " arguments."
-        ])
+        snoc errs (ActionArgLengthMismatch {production = prod.label, expected = addi 1 (length prod.terms), actual = length argtypes})
       else --continue
       let stackTypes = tail argtypes in -- these can be part of arguments on the stack
       let maybeErrs = zipWith (lam term: Term. lam ty: Type.
@@ -211,52 +232,40 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
           match mapLookup n nonTerminalTypes with Some ntType then
             let mismatch = neqi 0 (cmpTypeH (ty, ntType)) in
             if mismatch then
-              use MExprPrettyPrint in
-              let env = pprintEnvEmpty in
-              Some (join [
-                "Type mismatch for non-terminal \"", nameGetStr n, "\", between ",
-                (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env ntType).1, "."])
+              Some (TermTypeMismatch {production = prod.label, term = term, termTy = ntType, actionArgTy = ty})
             else None ()
           else
-            Some (join ["Unrecognized non-terminal \"", nameGetStr n, "\""])
+            Some (UndefinedTerm {production = prod.label, term = term})
         case Terminal t then
           -- NOTE(johnwikman, 2022-01-20): Maybe we want more than one type for tokens?
           match mapLookup t tokenConTypes with Some tokCon then
             let mismatch = neqi 0 (cmpTypeH (ty, tokCon.conArg)) in
             if mismatch then
-              use MExprPrettyPrint in
-              let env = pprintEnvEmpty in
-              Some (join ["Type mismatch for token ", tokReprToStr t, ", between ",
-              (getTypeStringCode 0 env ty).1, " and ", (getTypeStringCode 0 env tokCon.conArg).1, "."])
+              Some (TermTypeMismatch {production = prod.label, term = term, termTy = tokCon.conArg, actionArgTy = ty})
             else None ()
           else
-            Some (join ["could not find a type for token ", tokReprToStr t])
+            Some (UndefinedTerm {production = prod.label, term = term})
         end
       ) prod.terms stackTypes in
-      match filterOption maybeErrs with ([_] ++ _) & actualErrs then
-        snoc errs (strJoin "\n - " (
-          cons (join ["Argument type mismatch for rule ", int2string prodIdx, ":"])
-               actualErrs
-        ))
-      else
-        errs
+      concat errs (filterOption maybeErrs)
     ) [] syntaxDef.productions in
-    match ruleArgTypesResult with ([_] ++ _) & errs then
-      result.err (strJoin "\n" errs)
+    match ruleArgTypesResult with ([e] ++ errs) then
+      result.withAnnotations (result.mapM result.err errs) (result.err e)
     else -- Types are OK! Continue
 
     let _noEOFtype = nameSym "NoEOF" in
-    let entryType = mapLookupOrElse (lam. tyunknown_) syntaxDef.entrypoint nonTerminalTypes in
+    let entryType = mapLookupOrElse (lam. tyunknown_) syntaxDef.entrypoint.0 nonTerminalTypes in
     let eofCon = mapLookupOrElse (lam. {conIdent = _noEOFtype, conArg = tyunknown_}) (EOFRepr {}) tokenConTypes in
 
     if nameEq eofCon.conIdent _noEOFtype then
-      result.err "No type provided for EOF tokens"
+      result.err (MissingEOFTokenType ())
     else --continue
 
     -- create the entrypoint production
-    let initProd: Production = {
+    let initProd: Production label = {
       nt = nameSym "_entrypoint_",
-      terms = [NonTerminal syntaxDef.entrypoint, Terminal (EOFRepr {})],
+      label = syntaxDef.entrypoint.1,
+      terms = [NonTerminal syntaxDef.entrypoint.0, Terminal (EOFRepr {})],
       action = let entryArgName = nameSym "entryArg" in
                withType (tyarrows_ [tyunknown_, entryType, eofCon.conArg, entryType])
                         (nlams_ [(nameNoSym "state", tyunknown_),
@@ -268,19 +277,22 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     let nonTerminalTypes = mapInsert initProd.nt entryType nonTerminalTypes in
     let firstK: Map Term (Set [TokenRepr]) = cfgFirstK k syntaxDef in
 
-    if not (mapAll (lam fst. not (setIsEmpty fst)) firstK) then
-      result.err ("Invalid grammar. The FIRST set is not defined for one or more of its non-terminals.")
-    else --continue
+    let termsWithNoFirst = mapKeys (mapFilter setIsEmpty firstK) in
+    match termsWithNoFirst with [term] ++ terms then
+      let mkErr = lam x. result.err (FirstSetUndefined {term = x}) in
+      result.withAnnotations (result.mapM mkErr terms) (mkErr term)
+    else
 
-    let initState: Set LRStateItem = setInsert {
+    let initState: Set (LRStateItem label) = setInsert {
       nt = initProd.nt,
       terms = initProd.terms,
       stackPointer = 0,
       lookahead = make k (EOFRepr {}),
-      prodIdx = subi (length syntaxDef.productions) 1 -- We inserted the initial rule at the back
+      prodIdx = subi (length syntaxDef.productions) 1, -- We inserted the initial rule at the back
+      prodLabel = syntaxDef.entrypoint.1
     } (setEmpty lrStateItemCmp) in
-    let initState: Set LRStateItem = lrClosure k syntaxDef firstK initState in
-    let table: LRParseTable = {
+    let initState: Set (LRStateItem label) = lrClosure k syntaxDef firstK initState in
+    let table: LRParseTable label = {
       k_lookahead = k,
       entrypointIdx = 0,
       entrypointProdIdx = subi (length syntaxDef.productions) 1, -- We inserted the initial rule at the back
@@ -308,7 +320,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     --     R <- R U {(I, z, A -> a)}
 
     -- Iterate to create all states and transitions
-    recursive let iterate = lam table: LRParseTable. lam stateIdxLookup: Map (Set LRStateItem) Int. lam nextStateIdx: Int.
+    recursive let iterate = lam table: LRParseTable label. lam stateIdxLookup: Map (Set (LRStateItem label)) Int. lam nextStateIdx: Int.
       if geqi nextStateIdx (length table.states) then
         table
       else --continue
@@ -325,7 +337,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         else subi lhs.toIdx rhs.toIdx
       in
 
-      let result = setFold (lam acc: (LRParseTable, Map (Set LRStateItem) Int, Set {lookahead: [TokenRepr], toIdx: Int}, Set {nt: Name, toIdx: Int}). lam item: LRStateItem.
+      let result = setFold (lam acc: (LRParseTable label, Map (Set (LRStateItem label)) Int, Set {lookahead: [TokenRepr], toIdx: Int}, Set {nt: Name, toIdx: Int}). lam item: LRStateItem label.
         match acc with (table, stateIdxLookup, stateShifts, stateGotos) in
         match subsequence item.terms item.stackPointer (length item.terms)
         with ([x] ++ b) & postStackTerms then
@@ -369,10 +381,10 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     let table = iterate table (mapInsert initState 0 (mapEmpty setCmp)) 0 in
 
     -- Construct the reductions
-    let table = foldli (lam tableAcc: LRParseTable. lam stateIdx: Int. lam state: Set LRStateItem.
-      let stateReductions = setFold (lam redAcc: [{lookahead: [TokenRepr], prodIdx: Int}]. lam item: LRStateItem.
+    let table = foldli (lam tableAcc: LRParseTable label. lam stateIdx: Int. lam state: Set (LRStateItem label).
+      let stateReductions = setFold (lam redAcc: [{lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}]. lam item: LRStateItem label.
         if eqi item.stackPointer (length item.terms) then
-          snoc redAcc {lookahead = item.lookahead, prodIdx = item.prodIdx}
+          snoc redAcc {lookahead = item.lookahead, prodIdx = item.prodIdx, prodLabel = item.prodLabel}
         else
           redAcc
       ) [] state in
@@ -382,26 +394,23 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     -- Check for conflicts
     let conflicts = foldli (lam acc. lam stateIdx. lam.
       match (mapLookup stateIdx table.shifts, mapLookup stateIdx table.reductions) with (Some shifts, Some reductions) then
-        foldli (lam acc. lam reduceIdx. lam r1: {lookahead: [TokenRepr], prodIdx: Int}.
+        foldli (lam acc. lam reduceIdx. lam r1: {lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}.
+          -- TODO(vipa, 2023-08-31): Potentially try to merge
+          -- conflicts with the same preceeding stack state and the
+          -- same lookahead into a combined conflict (which contains
+          -- one or more reducing productions, and at most one shift)
+
           -- reduce-reduce check
-          let acc = foldl (lam acc. lam r2: {lookahead: [TokenRepr], prodIdx: Int}.
+          let acc = foldl (lam acc. lam r2: {lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}.
             if and (eqSeq tokReprEq r1.lookahead r2.lookahead) (neqi r1.prodIdx r2.prodIdx) then
-              snoc acc (join [
-                "reduce-reduce conflict in state ", int2string stateIdx, " on lookahead ",
-                "[", strJoin ", " (map tokReprToStr r1.lookahead), "] (reduce by rule ",
-                int2string r1.prodIdx, " and ", int2string r2.prodIdx, ")"
-              ])
+              snoc acc (LRConflict {lookahead = r1.lookahead, reducingProductions = [r1.prodLabel, r2.prodLabel], shiftAllowed = false})
             else
               acc
           ) acc (subsequence reductions (addi reduceIdx 1) (length reductions)) in
           -- shift-reduce check
           foldl (lam acc. lam sh: {lookahead: [TokenRepr], toIdx: Int}.
             if eqSeq tokReprEq r1.lookahead sh.lookahead then
-              snoc acc (join [
-                "shift-reduce conflict in state ", int2string stateIdx, " on lookahead ",
-                "[", strJoin ", " (map tokReprToStr r1.lookahead), "] (reduce by rule ",
-                int2string r1.prodIdx, " and shift into state ", int2string sh.toIdx, ")"
-              ])
+              snoc acc (LRConflict {lookahead = r1.lookahead, reducingProductions = [r1.prodLabel], shiftAllowed = true})
             else
               acc
           ) acc shifts
@@ -410,16 +419,12 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         acc
     ) [] table.states in
 
-    match conflicts with [] then
-      -- Table is now constructed and well-formed
-      result.ok table
-    else
-      result.err (strJoin "\n" (cons "Found following conflicts:" (map (concat " - ") conflicts)))
+    result.withAnnotations (result.mapM result.err conflicts) (result.ok table)
 
 
   -- Creates a multi-line representation of the LR parse table, with each line
   -- indented by the specified amount of whitespaces.
-  sem lrtable2string : Int -> LRParseTable -> String
+  sem lrtable2string : all label. Int -> LRParseTable label -> String
   sem lrtable2string indent =
   | lrtable ->
     let lines = [] in
@@ -436,9 +441,9 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     ) lines lrtable.syntaxDef.productions in
 
     let lines = snoc lines (concat (make indent ' ') "States:") in
-    let lines = foldli (lam lines. lam stateIdx. lam state: Set LRStateItem.
+    let lines = foldli (lam lines. lam stateIdx. lam state: Set (LRStateItem label).
       let lines = snoc lines (join [make (addi indent 2) ' ', "State ", int2string stateIdx, ":"]) in
-      let stateStrs = setFold (lam acc: [(String, String)]. lam item: LRStateItem.
+      let stateStrs = setFold (lam acc: [(String, String)]. lam item: LRStateItem label.
         let prefix = [make (addi indent 4) ' ', nameGetStr item.nt, " ->"] in
         let prefix = foldli (lam pfxacc. lam termIdx: Int. lam term: Term.
           if eqi item.stackPointer termIdx then
@@ -595,7 +600,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     v_join = var_ "join",
     v_int2string = var_ "int2string"
   }
-  sem lrGenerateParser: LRGeneratorBindings -> LRParseTable -> Expr
+  sem lrGenerateParser: all label. LRGeneratorBindings -> LRParseTable label -> Expr
   sem lrGenerateParser binds =
   | table ->
     /---- Assumed to exist "public" identifiers ----/
@@ -623,7 +628,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     --let lexerNextTokenResultType = tyrecord_ [("token", tokenType), ("stream", lexerStreamType)] in
     let lexerNextTokenResultType = ntycon_ binds.t_NextTokenResult in
 
-    let entrypointType = mapLookupOrElse (lam. tyunknown_) table.syntaxDef.entrypoint table.nonTerminalTypes in
+    let entrypointType = mapLookupOrElse (lam. tyunknown_) table.syntaxDef.entrypoint.0 table.nonTerminalTypes in
     let resultType = tyapps_ (ntycon_ binds.t_Result) [warningType, errorType, entrypointType] in
 
     /---- Set up names for initialized values ----/
@@ -712,7 +717,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
               -- case <i> then
               matchex_ (nvar_ varCurrentState) (pint_ i) (
                 let stateShifts: [{lookahead: [TokenRepr], toIdx: Int}] = mapLookupOrElse (lam. []) i table.shifts in
-                let stateReductions: [{lookahead: [TokenRepr], prodIdx: Int}] = mapLookupOrElse (lam. []) i table.reductions in
+                let stateReductions: [{lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}] = mapLookupOrElse (lam. []) i table.reductions in
 
                 let shiftMatches = map (lam shift: {lookahead: [TokenRepr], toIdx: Int}.
                   let lhCons: [{conIdent: Name, conArg: Type}] = map (lam repr. mapLookupOrElse (lam. error "malformed parse table! (1)") repr table.tokenConTypes) shift.lookahead in
@@ -762,7 +767,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
                   )
                 ) stateShifts in
 
-                let reductionMatches = map (lam reduction: {lookahead: [TokenRepr], prodIdx: Int}.
+                let reductionMatches = map (lam reduction: {lookahead: [TokenRepr], prodIdx: Int, prodLabel: label}.
                   let lhCons: [{conIdent: Name, conArg: Type}] = map (lam repr. mapLookupOrElse (lam. error "malformed parse table! (2)") repr table.tokenConTypes) reduction.lookahead in
                   let rule = get table.syntaxDef.productions reduction.prodIdx in
                   let termTypes = map (lam term: Term.

@@ -91,13 +91,14 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   con LRegInfix : () -> LabelRegexKind in
   con LRegPrefix : () -> LabelRegexKind in
   con LRegPostfix : () -> LabelRegexKind in
-  con LRegEnd : () -> LabelRegexKind in
+  con LRegStart : () -> LabelRegexKind in
   type GenLabel in
   con TyTop : {v: Name, i: Info} -> GenLabel in
   con TyRegex : {nt: {v: Name, i: Info}, kind: LabelRegexKind} -> GenLabel in
   con TyGrouping : {left: Info, right: Info} -> GenLabel in
   con ProdTop : {v: Name, i: Info} -> GenLabel in
   con ProdInternal : {name: {v: Name, i: Info}, info: Info} -> GenLabel in
+  con ProdStart : () -> GenLabel in
 
   let filename = args.synFile in
   let destinationFile = args.outFile in
@@ -875,7 +876,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       (map (lam nt : Name. (nt, f nt)) nts)
   in
   let productions
-    : Ref [Res Production]
+    : Ref [Res (Production GenLabel)]
     = ref []
   in
 
@@ -998,7 +999,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   -- internal to a production, i.e., its action produces a record with
   -- fields that are all sequences.
   let completeSeqProduction
-    : (Expr -> Expr) -> Name -> GenLabel -> PartialProduction -> Res Production
+    : (Expr -> Expr) -> Name -> GenLabel -> PartialProduction -> Res (Production GenLabel)
     = lam wrap. lam nt. lam label. lam x.
       let symbols =
         result.mapM identity x.symbols in
@@ -1011,7 +1012,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         : [PartialSymbol]
         -> [Expr]
         -> Map String [Expr]
-        -> Production
+        -> Production GenLabel
         = lam symbols. lam terms. lam fields.
           match foldl
             (lam acc. lam x : PartialSymbol.
@@ -1041,6 +1042,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           { nt = nt
           , terms = map (lam sym. sym.sym) symbols
           , action = action
+          , label = label
           }
       in result.map3 mkProd symbols terms fields
   in
@@ -1585,6 +1587,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
                 { nt = atomNt
                 , terms = [lPartSym.sym, ntSym.sym, rPartSym.sym]
                 , action = action
+                , label = TyGrouping {left = lpar.i, right = rpar.i}
                 } in
               modref productions (snoc (deref productions) (result.ok prod));
               { requiredFragments = []
@@ -1651,13 +1654,14 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         , extraFragments = cons (nameNoSym "EOFTokenParser") extraFragments
         } in
       let genOpResult : GenOpResult = mkOpLanguages genOpInput in
-      let mkRegexProductions : {v: Name, i: Info} -> [Res Production] = lam original.
+      let mkRegexProductions : {v: Name, i: Info} -> [Res (Production GenLabel)] = lam original.
         let rclosed = nameSym (concat (nameGetStr original.v) "_rclosed") in
         let ropen = nameSym (concat (nameGetStr original.v) "_ropen") in
         let regexNts : {prefix : Name, infix : Name, postfix : Name, atom : Name} =
           mapFindExn original.v operatorNtNames in
         let top =
           { nt = original.v
+          , label = TyTop original
           , terms = [NonTerminal rclosed]
           , action = withType
             (tyarrow_ stateTy (tyarrow_ tyunknown_ tyunknown_))  -- TODO(vipa, 2023-05-11): proper type?
@@ -1665,6 +1669,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           } in
         let atom =
           { nt = rclosed
+          , label = TyRegex {nt = original, kind = LRegAtom ()}
           , terms = [NonTerminal ropen, NonTerminal regexNts.atom]
           , action = withType
             (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
@@ -1675,6 +1680,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           } in
         let infix =
           { nt = ropen
+          , label = TyRegex {nt = original, kind = LRegInfix ()}
           , terms = [NonTerminal rclosed, NonTerminal regexNts.infix]
           , action = withType
             (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
@@ -1685,6 +1691,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           } in
         let prefix =
           { nt = ropen
+          , label = TyRegex {nt = original, kind = LRegPrefix ()}
           , terms = [NonTerminal ropen, NonTerminal regexNts.prefix]
           , action = withType
             (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
@@ -1695,6 +1702,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           } in
         let postfix =
           { nt = rclosed
+          , label = TyRegex {nt = original, kind = LRegPostfix ()}
           , terms = [NonTerminal rclosed, NonTerminal regexNts.postfix]
           , action = withType
             (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
@@ -1705,6 +1713,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           } in
         let initial =
           { nt = ropen
+          , label = TyRegex {nt = original, kind = LRegStart ()}
           , terms = []
           , action = withType
             (tyarrow_ stateTy tyunknown_)  -- TODO(vipa, 2023-05-11): proper type?
@@ -1719,7 +1728,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   in
 
   let composedFullParseFragmentName = nameSym (concat "Parse" langName) in
-  let productions : Res [Production] = result.mapM identity (deref productions) in
+  let productions : Res [Production GenLabel] = result.mapM identity (deref productions) in
   let parseFunctions : Res [Decl] =
     let lits : Res (Map String Name) =
       let collectLit = lam acc. lam term.
@@ -1834,11 +1843,41 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             lits)
         tokenInfo
         lits in
+      let regexKindToStr = lam x. switch x
+        case LRegAtom _ then "production"
+        case LRegInfix _ then "infix operator"
+        case LRegPrefix _ then "prefix operator"
+        case LRegPostfix _ then "postfix operator"
+        case LRegStart _ then error "impossible"
+        end in
+      let genLabelToString = lam x. switch x
+        case TyTop x then join ["A ", nameGetStr x.v, "\n"]
+        case TyRegex {nt = nt, kind = LRegStart _} then join ["Something coming before a ", nameGetStr nt.v, "\n"]
+        case TyRegex x then join ["A ", nameGetStr x.nt.v, " ", regexKindToStr x.kind, "\n"]
+        case TyGrouping x then snoc (multiHighlight (NoInfo ()) [x.left, x.right]) '\n'
+        case ProdTop x then snoc (simpleHighlight x.i) '\n'
+        case ProdInternal x then snoc (simpleHighlight x.info) '\n'
+        end in
+      let convertLRError = lam lrerror. switch lrerror
+        case ConflictingProductionTypes x then
+          let pprintGrouping = lam env. lam pair.
+            match getTypeStringCode 0 env pair.0 with (env, ty) in
+            let labels = join (map (lam x. concat "* " (genLabelToString x)) pair.1) in
+            (env, join [ty, ":\n", labels]) in
+          let groupings = (mapAccumL pprintGrouping pprintEnvEmpty (mapBindings x.productions)).1 in
+          (NoInfo (), join ["Conflicting production types for ", nameGetStr x.nt, "\n", join groupings])
+        case ActionArgLengthMismatch _ then (NoInfo (), "ActionArgLengthMismatch")
+        case TermTypeMismatch _ then (NoInfo (), "TermTypeMismatch")
+        case UndefinedTerm _ then (NoInfo (), "UndefinedTerm")
+        case MissingEOFTokenType _ then (NoInfo (), "MissingEOFTokenType")
+        case FirstSetUndefined _ then (NoInfo (), "FirstSetUndefined")
+        case LRConflict _ then (NoInfo (), "LRConflict")
+        end in
       let table = result.bind3 start tokenInfo productions
         (lam start. lam tokenInfo. lam productions.
           let lookahead = 1 in
           let def =
-            { entrypoint = start
+            { entrypoint = (start, ProdStart ())
             , productions = productions
             , initActionState = urecord_ [("errors", ref_ (seq_ [])), ("content", nvar_ contentName)]
             } in
@@ -1848,7 +1887,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             , tokenConTypes = tokenInfo
             , syntaxDef = cfgRemoveDead def
             } in
-          result.mapWE addInfo addInfo (lrCreateParseTable args)
+          result.mapWE identity convertLRError (lrCreateParseTable args)
         ) in
       let func = result.map (lrGenerateParser (lrDefaultGeneratorBindings ())) table in
       let wrap = lam genOpResult. lam func.

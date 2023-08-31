@@ -44,7 +44,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
   | Terminal TokenRepr
   | NonTerminal Name
 
-  type Production = {
+  type Production label = {
     -- Name of the non-terminal associated with this rule
     nt: Name,
     -- The terms associated with this rule
@@ -54,12 +54,14 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     --   tyState -> tyArg1 -> tyArg2 -> ... -> tyArgn -> tyRet
     -- where tyState is an arbitrary state type that has to be the same type
     -- for all actions in the syntax definition.
-    action: Expr
+    action: Expr,
+    -- An arbitrary label used only for error reporting
+    label: label
   }
 
-  type SyntaxDef = {
-    entrypoint: Name,
-    productions: [Production],
+  type SyntaxDef label = {
+    entrypoint: (Name, label),
+    productions: [Production label],
     -- thing that generates the initial action state, i.e. let state = <Expr> in
     initActionState: Expr
   }
@@ -85,7 +87,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
 
   -- Comparison between two grammars. This ignores the order in which
   -- productions are specified, but is strict in the naming equivalence.
-  sem cfgCmp2 : (SyntaxDef, SyntaxDef) -> Int
+  sem cfgCmp2 : all label. (SyntaxDef label, SyntaxDef label) -> Int
   sem cfgCmp2 =
   | (l, r) ->
     -- OPT(johnwikman, 2023-05-15): We could try to set up a bijection between
@@ -97,7 +99,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     let cInitActionState = cmpExpr l.initActionState r.initActionState in
     if neqi cInitActionState 0 then cInitActionState else --continue
 
-    let prodCmp: Production -> Production -> Int = lam lp. lam rp.
+    let prodCmp: Production label -> Production label -> Int = lam lp. lam rp.
       let cNt = nameCmp lp.nt rp.nt in
       if neqi cNt 0 then cNt else --continue
       let cTerms = seqCmp cfgTermCmp lp.terms rp.terms in
@@ -108,19 +110,19 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     let rprods = sort prodCmp r.productions in
     seqCmp prodCmp lprods rprods
 
-  sem cfgCmp : SyntaxDef -> SyntaxDef -> Int
+  sem cfgCmp : all label. SyntaxDef label -> SyntaxDef label -> Int
   sem cfgCmp other =
   | syntaxDef -> cfgCmp2 (other, syntaxDef)
 
-  sem cfgEq : SyntaxDef -> SyntaxDef -> Bool
+  sem cfgEq : all label. SyntaxDef label -> SyntaxDef label -> Bool
   sem cfgEq other =
   | syntaxDef -> eqi (cfgCmp other syntaxDef) 0
 
 
-  sem cfg2string : SyntaxDef -> String
+  sem cfg2string : all label. SyntaxDef label -> String
   sem cfg2string =
   | syntaxDef ->
-    let m = foldl (lam m: Map Name [Production]. lam prod: Production.
+    let m = foldl (lam m: Map Name [Production label]. lam prod: Production label.
       mapInsertWith concat prod.nt [prod] m
     ) (mapEmpty nameCmp) syntaxDef.productions in
 
@@ -174,11 +176,11 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
 
 
   -- Constructs the FIRST(k) set for any syntax definition
-  sem cfgFirstK : Int -> SyntaxDef -> Map Term (Set [TokenRepr])
+  sem cfgFirstK : all label. Int -> SyntaxDef label -> Map Term (Set [TokenRepr])
   sem cfgFirstK k =
   | syntaxDef ->
     -- Compile a set of all terms in the syntax definition
-    let allTerms: Set Term = foldl (lam acc: Set Term. lam production: Production.
+    let allTerms: Set Term = foldl (lam acc: Set Term. lam production: Production label.
       let acc = setInsert (NonTerminal production.nt) acc in
       foldl (lam acc: Set Term. lam term: Term. setInsert term acc) acc production.terms
     ) (setEmpty cfgTermCmp) syntaxDef.productions in
@@ -202,7 +204,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     --     else if for all Y_i, FIRST_k(Y_i) != ø:
     --       FIRST_k(S) <- FIRST_k(S) U ComposeFirst_k(FIRST_k, [Y_1,Y_2,...,Y_n])
     recursive let iterate = lam firstMap: Map Term (Set [TokenRepr]).
-      let resultMap = foldl (lam firstMap: Map Term (Set [TokenRepr]). lam production: Production.
+      let resultMap = foldl (lam firstMap: Map Term (Set [TokenRepr]). lam production: Production label.
         if eqi (length production.terms) 0 then
           mapInsertWith setUnion (NonTerminal production.nt) (setInsert [] (setEmpty (seqCmp tokReprCmp))) firstMap
         else if any (lam term: Term. setIsEmpty (mapLookupOrElse (lam. setEmpty (seqCmp tokReprCmp)) term firstMap)) production.terms then
@@ -219,10 +221,10 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
 
 
   -- Removes all productions that are unreachable from the entrypoint
-  sem cfgRemoveUnreachable : SyntaxDef -> SyntaxDef
+  sem cfgRemoveUnreachable : all label. SyntaxDef label -> SyntaxDef label
   sem cfgRemoveUnreachable =
   | syntaxDef ->
-    let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production.
+    let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production label.
       mapInsertWith concat prod.nt [i] m
     ) (mapEmpty nameCmp) syntaxDef.productions in
     let visited : Set Name = setEmpty nameCmp in
@@ -230,7 +232,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     let idxQueue = mapLookupOr [] syntaxDef.entrypoint ntToIdx in
     recursive let iterate = lam idxQueue. lam visited.
       match idxQueue with [idx] ++ idxQueue then
-        let prod: Production = get syntaxDef.productions idx in
+        let prod: Production label = get syntaxDef.productions idx in
         match foldl (lam acc. lam term.
           match acc with (visited, idxQueue) in
           match term with NonTerminal nt then
@@ -248,7 +250,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     let visited = iterate idxQueue visited in
     {syntaxDef with productions = filter (lam prod. setMem prod.nt visited) syntaxDef.productions}
 
-  sem cfgRemoveDead : SyntaxDef -> SyntaxDef
+  sem cfgRemoveDead : all label. SyntaxDef label -> SyntaxDef label
   sem cfgRemoveDead = | syntaxDef ->
     let termIsLive = lam liveNts. lam term.
       match term with NonTerminal n then setMem n liveNts else true in
@@ -266,12 +268,12 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
   -- loop until convergence:
   --   R <- reachable non-terminals in Grammar G
   --   G <- remove productions in G that references a non-terminal not in R
-  sem cfgRemoveUnparsable : SyntaxDef -> SyntaxDef
+  sem cfgRemoveUnparsable : all label. SyntaxDef label -> SyntaxDef label
   sem cfgRemoveUnparsable =
   | syntaxDef ->
-    recursive let convergenceLoop = lam syntaxDef: SyntaxDef.
+    recursive let convergenceLoop = lam syntaxDef: SyntaxDef label.
       printLn "In convergence loop";
-      let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production.
+      let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production label.
         mapInsertWith concat prod.nt [i] m
       ) (mapEmpty nameCmp) syntaxDef.productions in
       -- Step 1, identify all reachable productions
@@ -280,7 +282,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
       let queued = setInsert syntaxDef.entrypoint visited in
       recursive let iterate = lam idxQueue. lam queued. lam visited.
         match idxQueue with [idx] ++ idxQueue then
-          let prod: Production = get syntaxDef.productions idx in
+          let prod: Production label = get syntaxDef.productions idx in
           let visited = setInsert prod.nt visited in
           match foldl (lam acc. lam term.
             match acc with (queued, idxQueue) in
@@ -369,30 +371,30 @@ utest cfgTermEq nt_Ex nt_Ex with true in
 utest cfgTermEq nt_Ex t_EOF with false in
 
 -- A == B, but C != A
-let gramA: SyntaxDef = {
+let gramA: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_}
   ],
   initActionState = unit_
 } in
-let gramB: SyntaxDef = {
+let gramB: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_}
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_}
   ],
   initActionState = unit_
 } in
-let gramC: SyntaxDef = {
+let gramC: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [nt_Ex], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [nt_Ex], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_}
   ],
   initActionState = unit_
 } in
@@ -447,7 +449,7 @@ in
 
 type FirstKTestCase = {
   name: String,
-  syntaxDef: SyntaxDef,
+  syntaxDef: SyntaxDef (),
   first1: Map Term (Set [TokenRepr]),
   first2: Map Term (Set [TokenRepr]),
   first3: Map Term (Set [TokenRepr])
@@ -606,23 +608,23 @@ foldl (lam. lam tc: FirstKTestCase.
 
 
 -- Testing removing unreachable productions
-let gramA: SyntaxDef = {
+let gramA: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_}
   ],
   initActionState = unit_
 } in
-let gramB: SyntaxDef = {
+let gramB: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_},
-    {nt = _Ex3, terms = [t_Plus, nt_Ex, t_Plus], action = unit_},
-    {nt = _Ex3, terms = [nt_Ex4], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_},
+    {label = (), nt = _Ex3, terms = [t_Plus, nt_Ex, t_Plus], action = unit_},
+    {label = (), nt = _Ex3, terms = [nt_Ex4], action = unit_}
   ],
   initActionState = unit_
 } in
@@ -633,32 +635,32 @@ utest cfgEq gramA strippedGramB with true in
 
 
 -- Testing removing unparsable productions
-let gramA: SyntaxDef = {
+let gramA: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_}
   ],
   initActionState = unit_
 } in
-let gramB: SyntaxDef = {
+let gramB: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_Plus], action = unit_},
-    {nt = _Ex2, terms = [t_Times], action = unit_},
-    {nt = _Ex2, terms = [t_LParen, nt_Ex3, t_RParen], action = unit_},
-    {nt = _Ex3, terms = [nt_Ex4], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_Times], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_LParen, nt_Ex3, t_RParen], action = unit_},
+    {label = (), nt = _Ex3, terms = [nt_Ex4], action = unit_}
   ],
   initActionState = unit_
 } in
-let gramC: SyntaxDef = {
+let gramC: SyntaxDef () = {
   entrypoint = _Ex,
   productions = [
-    {nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
-    {nt = _Ex2, terms = [t_LParen, nt_Ex3, t_RParen], action = unit_},
-    {nt = _Ex3, terms = [nt_Ex4], action = unit_}
+    {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
+    {label = (), nt = _Ex2, terms = [t_LParen, nt_Ex3, t_RParen], action = unit_},
+    {label = (), nt = _Ex3, terms = [nt_Ex4], action = unit_}
   ],
   initActionState = unit_
 } in
