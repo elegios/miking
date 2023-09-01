@@ -1029,7 +1029,14 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             let fields = concat fields [(infoFieldLabel, mergeInfos_ infos), (termsFieldLabel, join_ terms)] in
             let stateName = nameSym "state" in
             let seqName = nameSym "res" in
-            let res = wrap (urecord_ fields) in
+            let res =
+              -- TODO(vipa, 2023-09-01): I'm not sure that the
+              -- individual fields have good types, they might be just
+              -- `Unknown`, in which case we *could* run into a type
+              -- error because two things shared a stack when they
+              -- shouldn't
+              let ty = map (lam pair. (pair.0, tyTm pair.1)) fields in
+              wrap (record_ (tyrecord_ ty) fields) in
             let resTy = tyTm res in
             let res = nlam_ stateName stateTy
               (foldr (lam sym. lam acc. nulam_ sym.param.0 acc) res symbols) in
@@ -1089,10 +1096,10 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         ( result.ok
           { param = (valName, tycon_ "Info")
           , sym = Terminal (PreLitRepr {lit = lit})
-          , info = recordproj_ "info" (nvar_ valName)
+          , info = nvar_ valName
           }
-        , [result.ok (seq_ [recordproj_ "info" (nvar_ valName)])]
-        , result.ok (seq_ [recordproj_ "info" (nvar_ valName)])
+        , [result.ok (seq_ [nvar_ valName])]
+        , result.ok (seq_ [nvar_ valName])
         , result.ok (untargetableType (tycon_ "Info"))
         )
 
@@ -1264,15 +1271,17 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       let #var"" =
         let opNtNames : {prefix : Name, infix : Name, postfix : Name, atom : Name} =
           mapFindExn op.nt operatorNtNames in
-        let nt = switch (op.lfield, op.rfield)
-          case (None _, None _) then opNtNames.atom
-          case (Some _, None _) then opNtNames.postfix
-          case (None _, Some _) then opNtNames.prefix
-          case (Some _, Some _) then opNtNames.infix
-          end in
+        match switch (op.lfield, op.rfield)
+          case (None _, None _) then (opNtNames.atom, [tycon_ "LClosed", tycon_ "RClosed"])
+          case (Some _, None _) then (opNtNames.postfix, [tycon_ "LOpen", tycon_ "RClosed"])
+          case (None _, Some _) then (opNtNames.prefix, [tycon_ "LClosed", tycon_ "ROpen"])
+          case (Some _, Some _) then (opNtNames.infix, [tycon_ "LOpen", tycon_ "ROpen"])
+          end
+        with (nt, openness) in
+        let ty = tyapps_ (ntycon_ op.names.opConSyn) openness in
         modref productions
           (snoc (deref productions)
-            (completeSeqProduction (lam x. withType (ntycon_ op.names.opConSyn) (nconapp_ op.names.opCon x)) nt (ProdTop op.definition) prod)) in
+            (completeSeqProduction (lam x. withType ty (nconapp_ op.names.opCon x)) nt (ProdTop op.definition) prod)) in
       let mkUnsplit = switch (op.lfield, op.rfield)
         case (None _, None _) then AtomUnsplit
           (lam conf : {record : Expr, info : Expr}.
@@ -1576,10 +1585,11 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
                             , ("inner", match_ ntVal (pseqtot_ [pvar_ "x"]) (var_ "x") never_)
                             ])))))
                 in
+                let ty = tyapps_ (ntycon_ tinfo.opSynName) [tycon_ "LClosed", tycon_ "RClosed"] in
                 let ty = tyarrow_ stateTy
                   (tyarrow_ lPartSym.param.1
                     (tyarrow_ ntSym.param.1
-                      (tyarrow_ rPartSym.param.1 tyunknown_)))
+                      (tyarrow_ rPartSym.param.1 ty)))
                 in
                 withType ty fn
               in
@@ -1659,67 +1669,81 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         let ropen = nameSym (concat (nameGetStr original.v) "_ropen") in
         let regexNts : {prefix : Name, infix : Name, postfix : Name, atom : Name} =
           mapFindExn original.v operatorNtNames in
+
         let top =
           { nt = original.v
           , label = TyTop original
           , terms = [NonTerminal rclosed]
           , action = withType
-            (tyarrow_ stateTy (tyarrow_ tyunknown_ tyunknown_))  -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tytuple_ [tycon_ "Info", ntycon_ original.v])))
             (ulam_ "p" (ulam_ "st" (genOpResult.finalizeFor original.v (var_ "p") (var_ "st"))))
           } in
-        let atom =
+        let atom = lam ty.
           { nt = rclosed
           , label = TyRegex {nt = original, kind = LRegAtom ()}
           , terms = [NonTerminal ropen, NonTerminal regexNts.atom]
           , action = withType
-            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ ty)))
             (ulam_ "p"
               (ulam_ "st"
                 (ulam_ "x"
                   (genOpResult.addAtomFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let infix =
+        let infix = lam ty.
           { nt = ropen
           , label = TyRegex {nt = original, kind = LRegInfix ()}
           , terms = [NonTerminal rclosed, NonTerminal regexNts.infix]
           , action = withType
-            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ ty)))
             (ulam_ "p"
               (ulam_ "st"
                 (ulam_ "x"
                   (genOpResult.addInfixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let prefix =
+        let prefix = lam ty.
           { nt = ropen
           , label = TyRegex {nt = original, kind = LRegPrefix ()}
           , terms = [NonTerminal ropen, NonTerminal regexNts.prefix]
           , action = withType
-            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ ty)))
             (ulam_ "p"
               (ulam_ "st"
                 (ulam_ "x"
                   (genOpResult.addPrefixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let postfix =
+        let postfix = lam ty.
           { nt = rclosed
           , label = TyRegex {nt = original, kind = LRegPostfix ()}
           , terms = [NonTerminal rclosed, NonTerminal regexNts.postfix]
           , action = withType
-            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ tyunknown_))) -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy (tyarrow_ tyunknown_ (tyarrow_ tyunknown_ ty)))
             (ulam_ "p"
               (ulam_ "st"
                 (ulam_ "x"
                   (genOpResult.addPostfixFor original.v (var_ "p") (var_ "x") (var_ "st")))))
           } in
-        let initial =
+        let initial = lam ty.
           { nt = ropen
           , label = TyRegex {nt = original, kind = LRegStart ()}
           , terms = []
           , action = withType
-            (tyarrow_ stateTy tyunknown_)  -- TODO(vipa, 2023-05-11): proper type?
+            (tyarrow_ stateTy ty)
             (ulam_ "p" (conapp_ "Some" (app_ (var_ "breakableInitState") unit_)))
           } in
-        map result.ok [top, atom, infix, prefix, postfix, initial]
+        let tinfo = optionGetOrElse (lam. never) (eitherGetLeft (mapFindExn original.v typeMap)) in
+        let ropenTy = result.map
+          (lam tinfo. tyapp_ (tycon_ "Option") (tyapps_ (tycon_ "State") [ntycon_ tinfo.opSynName, tycon_ "ROpen"]))
+          tinfo in
+        let rclosedTy = result.map
+          (lam tinfo. tyapp_ (tycon_ "Option") (tyapps_ (tycon_ "State") [ntycon_ tinfo.opSynName, tycon_ "RClosed"]))
+          tinfo in
+        [ result.ok top
+        , result.map atom rclosedTy
+        , result.map infix ropenTy
+        , result.map prefix ropenTy
+        , result.map postfix rclosedTy
+        , result.map initial ropenTy
+        ]
       in
       let newProds = map mkRegexProductions ntsWithInfo in
       modref productions (join (cons (deref productions) newProds));
@@ -1785,25 +1809,30 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
                       match_ (var_ "str") (pseqedge_ (map pchar_ pair.0) "rest" [])
                         (bind_
                           (ulet_ "endPos" (mkAdvancePosByStr (advanceFunc "advanceRow") (advanceFunc "advanceCol") (recordproj_ "pos" (var_ "stream")) pair.0))
-                          (urecord_
-                            [ ("token", nconapp_ pair.1 (appf2_ (var_ "makeInfo") (recordproj_ "pos" (var_"stream")) (var_ "endPos")))
-                            , ("stream", urecord_ [("pos", var_ "endPos"), ("str", var_ "rest")])
-                            ]))
+                          (conapp_ "Some"
+                            (urecord_
+                              [ ("token", nconapp_ pair.1 (appf2_ (var_ "makeInfo") (recordproj_ "pos" (var_"stream")) (var_ "endPos")))
+                              , ("stream", urecord_ [("pos", var_ "endPos"), ("str", var_ "rest")])
+                              ])))
                         acc
                     in
                     ulet_ "lit" (foldl addCase (conapp_ "None" unit_) x)
                   , ulet_ "tok" (appf2_ (var_ "parseToken") (recordproj_ "pos" (var_ "stream")) (recordproj_ "str" (var_ "stream")))
-                  , match_ (var_ "lit") (pcon_ "Some" (pvar_ "lit"))
-                    (match_ (app_ (recordproj_ "toOption" (var_ "result")) (var_ "tok")) (pcon_ "Some" (pvar_ "tok"))
-                      (if_
-                        (lti_ (int_ 0)
-                          (appf2_ (var_ "posCmp")
-                            (recordproj_ "pos" (recordproj_ "stream" (var_ "tok")))
-                            (recordproj_ "pos" (recordproj_ "stream" (var_ "lit")))))
-                        (app_ (recordproj_ "ok" (var_ "result")) (var_ "tok"))
+                  , ulet_ "res"
+                    (match_ (var_ "lit") (pcon_ "Some" (pvar_ "lit"))
+                      (match_ (app_ (recordproj_ "toOption" (var_ "result")) (var_ "tok")) (pcon_ "Some" (pvar_ "tok"))
+                        (if_
+                          (lti_ (int_ 0)
+                            (appf2_ (var_ "posCmp")
+                              (recordproj_ "pos" (recordproj_ "stream" (var_ "tok")))
+                              (recordproj_ "pos" (recordproj_ "stream" (var_ "lit")))))
+                          (app_ (recordproj_ "ok" (var_ "result")) (var_ "tok"))
+                          (app_ (recordproj_ "ok" (var_ "result")) (var_ "lit")))
                         (app_ (recordproj_ "ok" (var_ "result")) (var_ "lit")))
-                      (app_ (recordproj_ "ok" (var_ "result")) (var_ "lit")))
-                    (var_ "tok")
+                      (var_ "tok"))
+                  , appf3_ (recordproj_ "mapWE" (var_ "result")) (var_ "identity")
+                    (ulam_ "x" (utuple_ [appf2_ (var_ "makeInfo") (tupleproj_ 0 (var_ "x")) (tupleproj_ 0 (var_ "x")), tupleproj_ 1 (var_ "x")]))
+                    (var_ "res")
                   ]
                 }
               ]
@@ -1822,7 +1851,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           match e with Right ti then
             let f = lam ti.
               ( ti.repr
-              , { conArg = tyrecord_ [("v", ti.bareTy), ("i", tycon_ "Info")]
+              , { conArg = tyrecord_ [("val", ti.bareTy), ("info", tycon_ "Info")]
                 , conIdent = ti.tokConstructor
                 }
               )
@@ -1830,7 +1859,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           else None () in
         let res = result.mapM identity (mapOption f res) in
         let res =
-          let eofInfo = {conIdent = nameNoSym "EOFTok", conArg = tyrecord_ [("info ", tycon_ "Info")]} in
+          let eofInfo = {conIdent = nameNoSym "EOFTok", conArg = tyrecord_ [("info", tycon_ "Info")]} in
           result.map (cons (EOFRepr {}, eofInfo)) res in
         result.map (mapFromSeq tokReprCmp) res
       in
@@ -1865,9 +1894,25 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             let labels = join (map (lam x. concat "* " (genLabelToString x)) pair.1) in
             (env, join [ty, ":\n", labels]) in
           let groupings = (mapAccumL pprintGrouping pprintEnvEmpty (mapBindings x.productions)).1 in
-          (NoInfo (), join ["Conflicting production types for ", nameGetStr x.nt, "\n", join groupings])
+          (NoInfo (), join ["(Internal error) Conflicting production types for ", nameGetStr x.nt, "\n", join groupings])
         case ActionArgLengthMismatch _ then (NoInfo (), "ActionArgLengthMismatch")
-        case TermTypeMismatch _ then (NoInfo (), "TermTypeMismatch")
+        case TermTypeMismatch x then
+          match getTypeStringCode 0 pprintEnvEmpty x.termTy with (env, termTy) in
+          match getTypeStringCode 0 env x.actionArgTy with (env, actionArgTy) in
+          let msg = join
+            [ "(Internal error) Type mismatch for term ", cfgTerm2string x.term, ":\n"
+            , "* Term : ", termTy, "\n"
+            , "* Arg  : ", actionArgTy, "\n"
+            , "in production\n"
+            , genLabelToString x.production
+            ] in
+          (NoInfo (), msg)
+        case UnknownNTType x then
+          let msg = join
+            [ "(Internal error) Non-terminal ", nameGetStr x.nt," doesn't have a known return type\n"
+            , join (map genLabelToString x.productions)
+            ] in
+          (NoInfo (), msg)
         case UndefinedTerm _ then (NoInfo (), "UndefinedTerm")
         case MissingEOFTokenType _ then (NoInfo (), "MissingEOFTokenType")
         case FirstSetUndefined _ then (NoInfo (), "FirstSetUndefined")
@@ -1889,7 +1934,12 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
             } in
           result.mapWE identity convertLRError (lrCreateParseTable args)
         ) in
-      let func = result.map (lrGenerateParser (lrDefaultGeneratorBindings ())) table in
+      let func =
+        let bindings =
+          { lrDefaultGeneratorBindings () with
+            v_nextToken = nvar_ nextTokenName
+          } in
+        result.map (lrGenerateParser bindings) table in
       let wrap = lam genOpResult. lam func.
         let initLexerState = urecord_
           [ ("pos", app_ (var_ "initPos") (nvar_ fileName))
@@ -1921,7 +1971,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
       , tyBody = tyunknown_
       , body = parse (strJoin "\n"
         [ "lam filename. lam content."
-        , join ["match ", nameGetStr parseNormalName, " filename content with (ws, res) in"]
+        , join ["match result.consume (", nameGetStr parseNormalName, " filename content) with (ws, res) in"]
         , "for_ ws (lam x. printLn (infoWarningString x.0 x.1));"
         , "switch res"
         , "case Left es then"

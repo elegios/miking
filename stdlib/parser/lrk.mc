@@ -152,6 +152,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
   syn LRError label =
   | ConflictingProductionTypes {nt : Name, productions : Map Type [label] }
   | ActionArgLengthMismatch {production : label, expected : Int, actual : Int}
+  | UnknownNTType {nt : Name, productions : [label]}
   | TermTypeMismatch {production : label, term : Term, termTy : Type, actionArgTy : Type}
   | UndefinedTerm {production : label, term : Term}
   | MissingEOFTokenType ()
@@ -203,7 +204,11 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
       mapMapAccum
         (lam res. lam nt. lam tys.
           let res = if eqi 1 (mapSize tys)
-            then res
+            then match mapLookup tyunknown_ tys with Some productions
+              then result.withAnnotations
+                (result.err (UnknownNTType {nt = nt, productions = productions}))
+                res
+              else res
             else result.withAnnotations
               (result.err (ConflictingProductionTypes {nt = nt, productions = tys}))
               res
@@ -231,7 +236,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
         case NonTerminal n then
           match mapLookup n nonTerminalTypes with Some ntType then
             let mismatch = neqi 0 (cmpTypeH (ty, ntType)) in
-            if mismatch then
+            if false then -- TODO(vipa, 2023-09-01): I think this check is unnecessary for the workings of the parser, and it'll be checked by type-checking the code later
               Some (TermTypeMismatch {production = prod.label, term = term, termTy = ntType, actionArgTy = ty})
             else None ()
           else
@@ -240,7 +245,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
           -- NOTE(johnwikman, 2022-01-20): Maybe we want more than one type for tokens?
           match mapLookup t tokenConTypes with Some tokCon then
             let mismatch = neqi 0 (cmpTypeH (ty, tokCon.conArg)) in
-            if mismatch then
+            if false then -- TODO(vipa, 2023-09-01): I think this check is unnecessary for the workings of the parser, and it'll be checked by type-checking the code later
               Some (TermTypeMismatch {production = prod.label, term = term, termTy = tokCon.conArg, actionArgTy = ty})
             else None ()
           else

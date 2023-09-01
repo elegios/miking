@@ -44,17 +44,17 @@ lang TokenParser = WSACParser + TokenReprBase
   type NextTokenResult = {token : Token, stream : Stream}
 
   type LexError = (Pos, String)
-  type LexRes a = Result LexError LexError a
+  type LexRes w a = Result w LexError a
 
   syn Token =
-  sem nextToken : Stream -> LexRes NextTokenResult
+  sem nextToken : all w. Stream -> LexRes w NextTokenResult
   sem nextToken =
   | stream ->
     let stream: Stream = stream in
     let stream: Stream = eatWSAC stream.pos stream.str in
     parseToken stream.pos stream.str
 
-  sem parseToken : Pos -> String -> LexRes NextTokenResult
+  sem parseToken : all w. Pos -> String -> LexRes w NextTokenResult
   sem parseToken pos =
   | _ -> result.err (pos, "Unexpected character")
   sem tokKindEq : TokenRepr -> Token -> Bool
