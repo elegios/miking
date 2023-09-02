@@ -43,15 +43,28 @@ type PprintEnv = {
   -- values in 'nameMap'.
   -- OPT(Linnea, 2021-01-27): Maps offer the most efficient lookups as for now.
   -- Could be replaced by an efficient set data structure, were we to have one.
-  strings: Set String
+  strings: Set String,
 
+  -- Compact match-else statements, do not line break and indent if the else
+  -- branch of a match is also a match.
+  -- If `true`:
+  --   else match
+  --     <cond>
+  --   then
+  -- If `false`:
+  --   else
+  --     match
+  --       <cond>
+  --     then
+  optCompactMatchElse: Bool
 }
 
 -- TODO(dlunde,2020-09-29) Make it possible to debug the actual symbols
 
 let pprintEnvEmpty = { nameMap = mapEmpty nameCmp,
                        count = mapEmpty cmpString,
-                       strings = setEmpty cmpString }
+                       strings = setEmpty cmpString,
+                       optCompactMatchElse = true }
 
 
 -- Look up the string associated with a name in the environment
@@ -72,7 +85,7 @@ let pprintEnvAdd : Name -> String -> Int -> PprintEnv -> PprintEnv =
     let count = mapInsert baseStr i count in
     let nameMap = mapInsert name str nameMap in
     let strings = setInsert str strings in
-    {nameMap = nameMap, count = count, strings = strings}
+    {env with nameMap = nameMap, count = count, strings = strings}
 
 -- Adds the given name to the environment, if its exact string is not already
 -- mapped to. If the exact string is already mapped to, return None (). This
@@ -523,12 +536,15 @@ lang MatchPrettyPrint = PrettyPrint + MatchAst
   | t ->
     let i = indent in
     let ii = pprintIncr indent in
+    match (match (env.optCompactMatchElse, t.els) with (true, TmMatch _)
+           then (i, " ") else (ii, pprintNewline ii))
+      with (elseIndent, elseSpacing) in
     match pprintTmMatchBegin i env t with (env,begin) in
     match pprintCode ii env t.thn with (env,thn) in
-    match pprintCode ii env t.els with (env,els) in
+    match pprintCode elseIndent env t.els with (env,els) in
     (env,join [begin,
                "then", pprintNewline ii, thn, pprintNewline i,
-               "else", pprintNewline ii, els])
+               "else", elseSpacing, els])
 
   sem pprintTmMatchIn (indent : Int) (env: PprintEnv) =
   | t ->
