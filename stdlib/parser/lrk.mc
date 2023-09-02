@@ -702,10 +702,10 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
     let parseFunctionIdent = nameSym "parseLoop" in
     let parseFunctionBody =
       nreclets_ [(parseFunctionIdent, tyunknown_,
-        let lamStacks = nameSym "stacks" in
-        let lamLexerState = nameSym "lexerState" in
-        let lamStateTrace = nameSym "stateTrace" in
-        let lamLookahead = nameSym "lookahead" in
+        let lamStacks = nameSym "st" in
+        let lamLexerState = nameSym "ls" in
+        let lamStateTrace = nameSym "st" in
+        let lamLookahead = nameSym "lh" in
         nlams_ [(lamStacks, tyunknown_),
                 (lamLexerState, lexerStreamType),
                 (lamStateTrace, tyseq_ tyint_),
@@ -746,25 +746,33 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
                     --     result.err errors
                     --   else never
                     let stackLabel = mapLookupOrElse (lam. error "internal error (2)") h.conArg stackTypeLabel in
+                    let vShiftStack = nameSym "ss" in
+                    let vNewTypeStack = nameSym "nts" in
+                    let vNewStacks = nameSym "ns" in
+                    let vNextTokenResult = nameSym "ntr" in
                     bindall_ [
-                      ulet_ "shiftStack" (recordproj_ stackLabel (nvar_ lamStacks)),
-                      ulet_ "newTypeStack" (cons_ (nvar_ v) (var_ "shiftStack")),
-                      ulet_ "newStacks" (recordupdate_ (nvar_ lamStacks) stackLabel (var_ "newTypeStack")),
-                      ulet_ "nextTokenResult" (appf1_ (binds.v_nextToken) (nvar_ lamLexerState)),
+                      nulet_ vShiftStack (recordproj_ stackLabel (nvar_ lamStacks)),
+                      nulet_ vNewTypeStack (cons_ (nvar_ v) (nvar_ vShiftStack)),
+                      nulet_ vNewStacks (recordupdate_ (nvar_ lamStacks) stackLabel (nvar_ vNewTypeStack)),
+                      nulet_ vNextTokenResult (appf1_ (binds.v_nextToken) (nvar_ lamLexerState)),
                       matchall_ [
-                        matchex_ (var_ "nextTokenResult") (npcon_ (binds.c_ResultOk) (prec_ [("value", pvar_ "lexres")])) (
+                        let pvLexres = nameSym "lexres" in
+                        matchex_ (nvar_ vNextTokenResult) (npcon_ (binds.c_ResultOk) (prec_ [("value", npvar_ pvLexres)])) (
+                          let vNewLookahead = nameSym "nlh" in
+                          let vNewLexerState = nameSym "nls" in
+                          let vNewStateTrace = nameSym "nst" in
                           bindall_ [
-                            ulet_ "newLookahead" (snoc_ (nvar_ varRest) (recordproj_ "token" (var_ "lexres"))),
-                            ulet_ "newLexerState" (recordproj_ "stream" (var_ "lexres")),
-                            ulet_ "newStateTrace" (cons_ (int_ shift.toIdx) (nvar_ lamStateTrace)),
+                            nulet_ vNewLookahead (snoc_ (nvar_ varRest) (recordproj_ "token" (nvar_ pvLexres))),
+                            nulet_ vNewLexerState (recordproj_ "stream" (nvar_ pvLexres)),
+                            nulet_ vNewStateTrace (cons_ (int_ shift.toIdx) (nvar_ lamStateTrace)),
                             appf4_ (nvar_ parseFunctionIdent)
-                                   (var_ "newStacks")
-                                   (var_ "newLexerState")
-                                   (var_ "newStateTrace")
-                                   (var_ "newLookahead")
+                                   (nvar_ vNewStacks)
+                                   (nvar_ vNewLexerState)
+                                   (nvar_ vNewStateTrace)
+                                   (nvar_ vNewLookahead)
                           ]
                         ),
-                        matchex_ (var_ "nextTokenResult") (npcon_ (binds.c_ResultErr) (prec_ [("errors", pvar_ "errors"), ("warnings", pvar_ "warnings")])) (
+                        matchex_ (nvar_ vNextTokenResult) (npcon_ (binds.c_ResultErr) (prec_ [("errors", pvar_ "errors"), ("warnings", pvar_ "warnings")])) (
                           nconapp_ (binds.c_ResultErr) (urecord_ [("errors", var_ "errors"), ("warnings", var_ "warnings")])
                         )
                       ]
@@ -826,6 +834,7 @@ lang LRParser = ContextFreeGrammar + TokenReprEOF + MExprAst + MExprCmp
 
                       -- extract all values from the stacks and pop that value from the stack
                       -- and create the new production
+                      let vsTokenValue = mapi (lam i. lam. nameSym ) stackLabels in
                       bindall_ (snoc
                         -- Stack semantics, so we pop in reverse order
                         (reverse (mapi (lam i. lam lbl.

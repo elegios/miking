@@ -360,6 +360,18 @@ utest filter (lam x. eqi x 1) [1,2,4] with [1]
 utest filter (lam. false) [3,5,234,1,43] with [] using eqSeq eqi
 utest filter (lam x. gti x 2) [3,5,234,1,43] with [3,5,234,43]
 
+-- Counts number of filter matches
+let filterCount : all a. (a -> Bool) -> [a] -> Int = lam p. lam seq.
+    recursive let work = lam acc. lam s.
+      if null s then acc
+      else if p (head s) then work (addi acc 1) (tail s)
+      else work acc (tail s)
+    in work 0 seq
+
+utest filterCount (lam x. eqi x 1) [1,2,4] with 1
+utest filterCount (lam. false) [3,5,234,1,43] with 0
+utest filterCount (lam x. gti x 2) [3,5,234,1,43] with 4
+
 recursive let filterOption : all a. [Option a] -> [a] =
   lam optSeq.
   match optSeq with [Some x] ++ optSeq then cons x (filterOption optSeq)
@@ -746,3 +758,35 @@ utest subseqReplace eqi [3,4,5] [42,42] [1,2,3,4,5,6,7] with [1,2,42,42,6,7]
 utest subseqReplace eqi [1,1] [100,101,100] [0,1,0,1,2,1,1,3,4,0,0,1,1,0,1,0] with [0,1,0,1,2,100,101,100,3,4,0,0,100,101,100,0,1,0]
 utest subseqReplace eqi [1,1] [2] [3,4,3] with [3,4,3]
 utest subseqReplace eqi [0,1,2] [88] [0,0,1,2,100,0,1] with [0,88,100,0,1]
+
+
+-- Replace all contiguous subsequences where all elements match the predicate
+-- with the specified replacement. Chooses the longest matching subsequence
+-- from left to right
+let subseqReplacePred: all a. (a -> Bool) -> [a] -> [a] -> [a] =
+    lam pred. lam replacement. lam seq.
+    recursive let work = lam n. lam seqIdx. lam acc.
+      if eqi seqIdx (length seq) then
+        -- final case, replace any matched sequence so far
+        if gti n 0 then concat acc replacement
+        else acc
+      else
+        let e = get seq seqIdx in
+        if pred e then
+          work (addi n 1) (addi seqIdx 1) acc
+        else if gti n 0 then
+          work 0 (addi seqIdx 1) (join [acc, snoc replacement e])
+        else
+          work 0 (addi seqIdx 1) (snoc acc e)
+    in
+    work 0 0 []
+
+utest subseqReplacePred (eqi 1) [10] [] with []
+utest subseqReplacePred (eqi 1) [10] [2] with [2]
+utest subseqReplacePred (eqi 1) [10] [2,3] with [2,3]
+utest subseqReplacePred (eqi 1) [10] [1] with [10]
+utest subseqReplacePred (eqi 1) [10] [1,1] with [10]
+utest subseqReplacePred (eqi 1) [10] [2,1,1,1,2] with [2,10,2]
+utest subseqReplacePred (eqi 1) [10] [2,1,1,3,1,2] with [2,10,3,10,2]
+utest subseqReplacePred (eqi 1) [10] [1,1,3,1,1,1,1] with [10,3,10]
+utest subseqReplacePred (eqi 1) [10] [1,1,3,1,1,1,1,10] with [10,3,10,10]

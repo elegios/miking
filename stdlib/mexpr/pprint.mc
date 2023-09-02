@@ -56,7 +56,10 @@ type PprintEnv = {
   --     match
   --       <cond>
   --     then
-  optCompactMatchElse: Bool
+  optCompactMatchElse: Bool,
+
+  optSingleLineLimit: Int,
+  optSingleLineConstSeq: Bool
 }
 
 -- TODO(dlunde,2020-09-29) Make it possible to debug the actual symbols
@@ -64,7 +67,9 @@ type PprintEnv = {
 let pprintEnvEmpty = { nameMap = mapEmpty nameCmp,
                        count = mapEmpty cmpString,
                        strings = setEmpty cmpString,
-                       optCompactMatchElse = true }
+                       optCompactMatchElse = true,
+                       optSingleLineLimit = 40,
+                       optSingleLineConstSeq = true }
 
 
 -- Look up the string associated with a name in the environment
@@ -297,7 +302,10 @@ lang AppPrettyPrint = PrettyPrint + AppAst
     match printParen indent env (head apps) with (env,fun) then
       let aindent = pprintIncr indent in
       match printArgs aindent env (tail apps) with (env,args) in
-      (env, join [fun, pprintNewline aindent, args])
+      if lti (filterCount (lam c. not (isWhitespace c)) args) env.optSingleLineLimit then
+        (env, join [fun, " ", subseqReplacePred isWhitespace " " args])
+      else
+        (env, join [fun, pprintNewline aindent, args])
     else errorSingle [t.info] "Impossible"
 end
 
@@ -372,9 +380,13 @@ lang LetPrettyPrint = PrettyPrint + LetAst + UnknownTypeAst
       (env, concat ": " ty)
     with (env, tyStr) in
     match pprintCode (pprintIncr indent) env body with (env,bodyStr) in
+    let bodySep =
+      if gti (length bodyStr) env.optSingleLineLimit then
+        pprintNewline (pprintIncr indent)
+      else " "
+    in
     (env,
-     join ["let ", pprintVarString baseStr, tyStr, " =",
-           pprintNewline (pprintIncr indent), bodyStr])
+     join ["let ", pprintVarString baseStr, tyStr, " =", bodySep, bodyStr])
 
   sem pprintCode (indent : Int) (env: PprintEnv) =
   | TmLet t ->
@@ -387,9 +399,13 @@ lang LetPrettyPrint = PrettyPrint + LetAst + UnknownTypeAst
       match pprintLetAssignmentCode indent env {
               ident = t.ident, body = t.body, tyAnnot = t.tyAnnot}
       with (env, letStr) in
+      let inSep =
+        if gti (length letStr) env.optSingleLineLimit then
+          pprintNewline indent
+        else " "
+      in
       (env,
-       join [letStr,
-             pprintNewline indent, "in",
+       join [letStr, inSep, "in",
              pprintNewline indent, inexpr])
 end
 
@@ -657,7 +673,11 @@ lang SeqPrettyPrint = PrettyPrint + SeqAst + ConstPrettyPrint + CharAst
                     env t.tms
     with (env,tms) in
     let merged =
-      strJoin (concat "," (pprintNewline (pprintIncr indent))) tms
+      if and env.optSingleLineConstSeq
+                  (forAll (lam e. match e with TmConst _ then true else false) t.tms) then
+        strJoin ", " tms
+      else
+        strJoin (concat "," (pprintNewline (pprintIncr indent))) tms
     in
     (env,join ["[ ", merged, " ]"])
 end
