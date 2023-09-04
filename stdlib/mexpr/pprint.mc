@@ -68,7 +68,7 @@ let pprintEnvEmpty = { nameMap = mapEmpty nameCmp,
                        count = mapEmpty cmpString,
                        strings = setEmpty cmpString,
                        optCompactMatchElse = true,
-                       optSingleLineLimit = 40,
+                       optSingleLineLimit = 60,
                        optSingleLineConstSeq = true }
 
 
@@ -257,7 +257,10 @@ lang PrettyPrint = IdentifierPrettyPrint
   sem printArgs (indent : Int) (env : PprintEnv) =
   | exprs ->
     match mapAccumL (printParen indent) env exprs with (env,args) in
-    (env, strJoin (pprintNewline indent) args)
+    if lti (foldl addi 0 (map length args)) env.optSingleLineLimit then
+      (env, strJoin " " args)
+    else
+      (env, strJoin (pprintNewline indent) args)
 
   -- Helper function for printing parentheses (around patterns)
   sem printPatParen (indent : Int) (env : PprintEnv) =
@@ -302,8 +305,8 @@ lang AppPrettyPrint = PrettyPrint + AppAst
     match printParen indent env (head apps) with (env,fun) then
       let aindent = pprintIncr indent in
       match printArgs aindent env (tail apps) with (env,args) in
-      if lti (filterCount (lam c. not (isWhitespace c)) args) env.optSingleLineLimit then
-        (env, join [fun, " ", subseqReplacePred isWhitespace " " args])
+      if lti (length args) env.optSingleLineLimit then
+        (env, join [fun, " ", args])
       else
         (env, join [fun, pprintNewline aindent, args])
     else errorSingle [t.info] "Impossible"
