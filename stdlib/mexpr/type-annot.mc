@@ -237,7 +237,7 @@ lang VarTypeAnnot = TypeAnnot + VarAst
             ty
           else
             let msg = join [
-              "Type of variable is inconsistent with environment\n",
+              "Type of variable '", nameGetStr t.ident, "' is inconsistent with environment\n",
               "Variable annotated with type: ", _pprintType t.ty, "\n",
               "Type in variable environment: ", _pprintType ty
             ] in

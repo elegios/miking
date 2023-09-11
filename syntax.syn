@@ -1,0 +1,222 @@
+language MCore
+
+start File
+
+type File
+type Top
+type Expr {
+  grouping = "(" ")",
+}
+type Type {
+  grouping = "(" ")",
+}
+type Pat {
+  grouping = "(" ")",
+}
+
+prod File: File = tops:Top* ("mexpr" e:Expr)?
+
+-- Basic tokens
+token String {
+  repr = StringRepr {},
+  constructor = StringTok,
+  fragment = StringTokenParser,
+}
+token UInt {
+  repr = UIntRepr {},
+  constructor = UIntTok,
+  fragment = UIntTokenParser,
+}
+token Char {
+  repr = CharRepr {},
+  constructor = CharTok,
+  fragment = CharTokenParser,
+}
+token Float {
+  repr = FloatRepr {},
+  constructor = FloatTok,
+  fragment = FloatTokenParser,
+}
+token FrozenName {
+  repr = FrozenRepr {},
+  constructor = FrozenTok,
+  fragment = FrozenTokenParser,
+}
+token LIdent {
+  repr = LIdentRepr {},
+  constructor = LIdentTok,
+  fragment = LIdentTokenParser,
+  ty = String,
+}
+token UIdent {
+  repr = UIdentRepr {},
+  constructor = UIdentTok,
+  fragment = UIdentTokenParser,
+  ty = String,
+}
+
+-- Wrapping tokens that just change the type in the AST
+token UName {
+  base = UIdent,
+  wrap = nameNoSym,
+  ty = Name,
+}
+token LName {
+  base = LIdent,
+  wrap = nameNoSym,
+  ty = Name,
+}
+
+-- Token types only used through literals
+token {fragment = OperatorTokenParser,}
+token {fragment = CommaTokenParser,}
+token {fragment = SemiTokenParser,}
+token {fragment = BracketTokenParser,}
+
+-- Whitespace and comments
+token {fragment = LineCommentParser,}
+token {fragment = MultilineCommentParser,}
+token {fragment = WhitespaceParser,}
+
+
+-- Top-level declarations  -----------------------------------------------------
+
+-- Actual top-level declarations
+prod RecLetTop: Top =
+  "recursive"
+  bindings:{"let" ident:LName (":" tyBody:Type)? "=" body:Expr}+
+  "end"
+prod LetTop: Top = "let" ident:LName (":" tyBody:Type)? "=" body:Expr
+prod TypeTop: Top = "type" ident:UName params:LName* ("=" tyIdent:Type)?
+prod ConTop: Top = "con" ident:UName ":" tyIdent:Type
+prod UtestTop: Top = "utest" test:Expr "with" expected:Expr ("using" tusing:Expr)?
+prod ExternalTop: Top = "external" ident:LName bang:"!"? ":" tyIdent:Type
+prod LangTop: Top =
+  "lang" ident:UName ("=" includes:UName ("+" includes:UName))?
+  decls:Top*
+  "end"
+
+-- Top-level declarations only allowed in "lang"s, shared with the above
+-- for convenience
+prod Syn: Top = "syn" ident:UName params:LName*
+  ("="
+    cons:{"|" ident:UName ty:Type?}*
+  )?
+prod SemSig: Top = "sem" ident:LName ":" tyBody:Type
+prod Sem: Top =
+  "sem" ident:LName
+  params:{ident:LName | "(" ident:LName (":" tyIdent:Type)? ")"}*
+  "="
+  cases:{"|" pat:Pat "->" body:Expr}+
+
+
+-- Expressions -----------------------------------------------------------------
+
+-- TODO(vipa, 2022-09-03): Do we want to merge the syntactic sorts of
+-- `Expr`, `Type`, and `Pat`?
+
+-- Expression operators that require precedence (nothing else is left-open)
+postfix Proj: Expr = "." (label:LName | idx:UInt)
+infix left App: Expr = empty
+infix left Semi: Expr = ";"
+
+-- Prefix expressions
+prefix Type: Expr = "type" v:UName (args:LName)* ("=" ty:Type)? "in"
+prefix ConDef: Expr = "con" v:UName ":" ty:Type "in"
+prefix RecLet: Expr =
+  "recursive"
+  bindings:{"let" v:LName (":" ty:Type)? "=" e:Expr}
+  "in"
+prefix Let: Expr = "let" v:LName (":" ty:Type)? "=" e:Expr "in"
+prefix Lam: Expr = "lam" (v:LName (":" ty:Type)?)? "."
+prefix Use: Expr = "use" n:UName "in"
+prefix Utest: Expr = "utest" e:Expr "with" e2:Expr ("using" f:Expr)? "in"
+prefix External: Expr = "external" n:LName bang:"!"? ":" ty:Type "in"
+prefix MatchIn: Expr = "match" e:Expr "with" p:Pat "in"
+prod Match: Expr = "match" e:Expr "with" p:Pat "then" t:Expr "else" e:Expr
+prod If: Expr = "if" c:Expr "then" t:Expr "else" e:Expr
+
+prod Switch: Expr = "switch" c:Expr cases:{"case" p:Pat "then" e:Expr}+ "end"
+
+-- Simple left/right-closed expressions
+prod Con: Expr = c:UName
+prod Var: Expr = v:LName
+prod FrozenVar: Expr = v:FrozenName
+prod Char: Expr = v:Char
+prod Int: Expr = v:UInt
+prod Float: Expr = v:Float
+prod True: Expr = "true"
+prod False: Expr = "false"
+prod Never: Expr = "never"
+
+-- Composite left/right-closed expressions
+prod Tuple: Expr = "(" (e:Expr "," (e:Expr ("," e:Expr)* ","?)?)? ")"
+prod String: Expr = v:String
+prod Sequence: Expr = "[" (v:Expr ("," v:Expr)*)? ","? "]"
+prod Record: Expr =
+  "{"
+  (fields:{label:LName "=" e:Expr}
+   fields:{"," label:LName "=" e:Expr}*
+   ","?)?
+  "}"
+prod RecordUpdate: Expr =
+  "{" e:Expr "with"
+      updates:{label:LName "=" e:Expr}
+      updates:{"," label:LName "=" e:Expr}*
+  ","? "}"
+
+-- Precedence table for expressions
+precedence {
+  Proj;
+  App;
+  Semi;
+  Type ConDef RecLet Let Lam Use Utest External MatchIn Match If;
+}
+
+
+-- Patterns --------------------------------------------------------------------
+
+prefix Not: Pat = "!"
+prefix ConPat: Pat = c:UName
+
+infix left Or: Pat = "|"
+infix left And: Pat = "&"
+
+prod StringPat: Pat = v:String
+prod IntPat: Pat = v:UInt
+prod CharPat: Pat = v:Char
+prod TruePat: Pat = "true"
+prod FalsePat: Pat = "false"
+prod NamedPat: Pat = v:LName
+
+prod TuplePat: Pat =
+  "(" (p:Pat "," (p:Pat ("," p:Pat)* ","?)?)? ")"
+infix ConcatPat: Pat = "++"
+prod SequencePat: Pat = "[" (pats:Pat ("," pats:Pat)* ","?)? "]"
+prod RecordPat: Pat =
+  "{"
+  (fields:{label:LName "=" p:Pat}
+   fields:{"," label:LName "=" p:Pat}*
+   ","?)?
+  "}"
+
+precedence {
+  Not ConPat;
+  And;
+  Or;
+}
+
+
+-- Types -----------------------------------------------------------------------
+
+prod ConType: Type = c:UName
+prod VarType: Type = v:LName
+prod SequenceType: Type = "[" ty:Type "]"
+prod RecordType: Type =
+  "{"
+  (fields:{label:LName "=" ty:Type}
+   fields:{"," label:LName "=" ty:Type}*
+   ","?)?
+  "}"
+prod TupleType: Type =
+  "(" (ty:Type "," (ty:Type ("," ty:Type)* ","?)?)? ")"
