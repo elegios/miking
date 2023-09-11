@@ -94,7 +94,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
     -- names of non-terminals in both grammars, which would allow for semantic
     -- equivalence between the grammars instead of just considering a more
     -- structural one. But maybe this should be its own comparison function.
-    let cEntrypoint = nameCmp l.entrypoint r.entrypoint in
+    let cEntrypoint = nameCmp l.entrypoint.0 r.entrypoint.0 in
     if neqi cEntrypoint 0 then cEntrypoint else --continue
     let cInitActionState = cmpExpr l.initActionState r.initActionState in
     if neqi cInitActionState 0 then cInitActionState else --continue
@@ -228,8 +228,8 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
       mapInsertWith concat prod.nt [i] m
     ) (mapEmpty nameCmp) syntaxDef.productions in
     let visited : Set Name = setEmpty nameCmp in
-    let visited = setInsert syntaxDef.entrypoint visited in
-    let idxQueue = mapLookupOr [] syntaxDef.entrypoint ntToIdx in
+    let visited = setInsert syntaxDef.entrypoint.0 visited in
+    let idxQueue = mapLookupOr [] syntaxDef.entrypoint.0 ntToIdx in
     recursive let iterate = lam idxQueue. lam visited.
       match idxQueue with [idx] ++ idxQueue then
         let prod: Production label = get syntaxDef.productions idx in
@@ -272,14 +272,14 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
   sem cfgRemoveUnparsable =
   | syntaxDef ->
     recursive let convergenceLoop = lam syntaxDef: SyntaxDef label.
-      printLn "In convergence loop";
+      --printLn "In convergence loop";
       let ntToIdx : Map Name [Int] = foldli (lam m. lam i. lam prod: Production label.
         mapInsertWith concat prod.nt [i] m
       ) (mapEmpty nameCmp) syntaxDef.productions in
       -- Step 1, identify all reachable productions
       let visited : Set Name = setEmpty nameCmp in
-      let idxQueue = mapLookupOr [] syntaxDef.entrypoint ntToIdx in
-      let queued = setInsert syntaxDef.entrypoint visited in
+      let idxQueue = mapLookupOr [] syntaxDef.entrypoint.0 ntToIdx in
+      let queued = setInsert syntaxDef.entrypoint.0 visited in
       recursive let iterate = lam idxQueue. lam queued. lam visited.
         match idxQueue with [idx] ++ idxQueue then
           let prod: Production label = get syntaxDef.productions idx in
@@ -313,7 +313,7 @@ lang ContextFreeGrammar = TokenReprBase + MExprAst + MExprCmp
         syntaxDef
     in
     let res = convergenceLoop syntaxDef in
-    printLn "post convergence loop";
+    --printLn "post convergence loop";
     res
 end
 
@@ -372,7 +372,7 @@ utest cfgTermEq nt_Ex t_EOF with false in
 
 -- A == B, but C != A
 let gramA: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
@@ -381,7 +381,7 @@ let gramA: SyntaxDef () = {
   initActionState = unit_
 } in
 let gramB: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
@@ -390,7 +390,7 @@ let gramB: SyntaxDef () = {
   initActionState = unit_
 } in
 let gramC: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [nt_Ex], action = unit_},
@@ -466,29 +466,29 @@ let firstKTestCases: [FirstKTestCase] = [
   {
     name = "Calculator Syntax",
     syntaxDef = {
-      entrypoint = _Expr,
+      entrypoint = (_Expr, ()),
       productions = [
-        { nt = _Expr, terms = [nt_Expr, t_Plus, nt_Term],
+        { nt = _Expr, terms = [nt_Expr, t_Plus, nt_Term], label = (),
           action = withType (tyarrows_ [tyunit_, tyint_, tokEmptyTy, tyint_, tyint_])
                             (ulams_ ["actionState", "l", "op", "r"]
                                     (addi_ (var_ "l") (var_ "r")))},
-        { nt = _Expr, terms = [nt_Term],
+        { nt = _Expr, terms = [nt_Term], label = (),
           action = withType (tyarrows_ [tyunit_, tyint_, tyint_])
                             (ulams_ ["actionState", "t"]
                                     (var_ "t"))},
-        { nt = _Term, terms = [nt_Term, t_Times, nt_Factor],
+        { nt = _Term, terms = [nt_Term, t_Times, nt_Factor], label = (),
           action = withType (tyarrows_ [tyunit_, tyint_, tokEmptyTy, tyint_, tyint_])
                             (ulams_ ["actionState", "l", "op", "r"]
                                     (muli_ (var_ "l") (var_ "r")))},
-        { nt = _Term, terms = [nt_Factor],
+        { nt = _Term, terms = [nt_Factor], label = (),
           action = withType (tyarrows_ [tyunit_, tyint_, tyint_])
                             (ulams_ ["actionState", "f"]
                                     (var_ "f"))},
-        { nt = _Factor, terms = [t_Int],
+        { nt = _Factor, terms = [t_Int], label = (),
           action = withType (tyarrows_ [tyunit_, tokIntvalTy, tyint_])
                             (ulams_ ["actionState", "i"]
                                     (recordproj_ "val" (var_ "i")))},
-        { nt = _Factor, terms = [t_LParen, nt_Expr, t_RParen],
+        { nt = _Factor, terms = [t_LParen, nt_Expr, t_RParen], label = (),
           action = withType (tyarrows_ [tyunit_, tokEmptyTy, tyint_, tokEmptyTy, tyint_])
                             (ulams_ ["actionState", "lp", "e", "rp"]
                                     (var_ "e"))}
@@ -541,21 +541,21 @@ let firstKTestCases: [FirstKTestCase] = [
   {
     name = "non-LL Example (more left parentheses than right parentheses)",
     syntaxDef = {
-      entrypoint = _LeftOnly,
+      entrypoint = (_LeftOnly, ()),
       productions = [
-        {nt = _LeftOnly, terms = [t_LParen, nt_LeftOnly],
+        {nt = _LeftOnly, terms = [t_LParen, nt_LeftOnly], label = (),
          action = withType (tyarrows_ [tyunit_, tokEmptyTy, tystr_, tystr_])
                            (ulams_ ["actionState", "lparen", "lprod"]
                                    (cons_ (char_ '(') (var_ "lprod")))},
-        {nt = _LeftOnly, terms = [nt_LeftRight],
+        {nt = _LeftOnly, terms = [nt_LeftRight], label = (),
          action = withType (tyarrows_ [tyunit_, tystr_, tystr_])
                            (ulams_ ["actionState", "lrprod"]
                                    (cons_ (char_ '|') (var_ "lrprod")))},
-        {nt = _LeftRight, terms = [t_LParen, nt_LeftRight, t_RParen],
+        {nt = _LeftRight, terms = [t_LParen, nt_LeftRight, t_RParen], label = (),
          action = withType (tyarrows_ [tyunit_, tokEmptyTy, tystr_, tokEmptyTy, tystr_])
                            (ulams_ ["actionState", "lparen", "middle", "rparen"]
                                    (cons_ (char_ '(') (snoc_ (var_ "middle") (char_ ')'))))},
-        {nt = _LeftRight, terms = [],
+        {nt = _LeftRight, terms = [], label = (),
          action = withType (tyarrows_ [tyunit_, tystr_])
                            (ulams_ ["actionState"]
                                    (str_ "e"))}
@@ -609,7 +609,7 @@ foldl (lam. lam tc: FirstKTestCase.
 
 -- Testing removing unreachable productions
 let gramA: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
@@ -618,7 +618,7 @@ let gramA: SyntaxDef () = {
   initActionState = unit_
 } in
 let gramB: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
@@ -636,7 +636,7 @@ utest cfgEq gramA strippedGramB with true in
 
 -- Testing removing unparsable productions
 let gramA: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
@@ -645,7 +645,7 @@ let gramA: SyntaxDef () = {
   initActionState = unit_
 } in
 let gramB: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_Plus], action = unit_},
@@ -656,7 +656,7 @@ let gramB: SyntaxDef () = {
   initActionState = unit_
 } in
 let gramC: SyntaxDef () = {
-  entrypoint = _Ex,
+  entrypoint = (_Ex, ()),
   productions = [
     {label = (), nt = _Ex, terms = [t_LParen, nt_Ex2, t_RParen], action = unit_},
     {label = (), nt = _Ex2, terms = [t_LParen, nt_Ex3, t_RParen], action = unit_},
