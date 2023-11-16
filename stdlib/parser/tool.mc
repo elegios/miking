@@ -52,6 +52,9 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   use Fragments in
   use SelfhostAst in
 
+  type MExpr = use Ast in Expr in
+  type MType = use Ast in Type in
+
   type TypeInfo =
     { ty : Type
     , ensureSuffix : Bool
@@ -143,7 +146,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   -- needs a bit of conversion to create proper MExpr code (though most
   -- of it is just switching from XExpr to TmX).
   recursive let exprToMExpr
-    : Expr -> Res (use Ast in Expr)
+    : Expr -> Res MExpr
     = lam e. switch e
       case AppExpr (x & {left = ConExpr c}) then
         result.map
@@ -176,7 +179,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
           , frozen = false
           })
       case RecordExpr x then
-        let f : {name : {v: String, i: Info}, val: Expr} -> Res (String, Expr) = lam field.
+        let f : {name : {v: String, i: Info}, val: Expr} -> Res (String, MExpr) = lam field.
           result.map (lam e. (field.name.v, e)) (exprToMExpr field.val) in
         result.map (lam pairs. withInfo x.info (urecord_ pairs)) (result.mapM f x.fields)
       end
@@ -186,7 +189,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   -- syntactically as much as possible with `Type` in MExpr, so a
   -- similar approach to exprToMExpr is needed for conversion.
   recursive let exprToMExprTy
-    : Expr -> Res Type
+    : Expr -> Res MType
     = lam e. switch e
       case AppExpr x then
         result.map2
@@ -332,20 +335,20 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
     result.withAnnotations multi defs
   in
   type TokenDeclDesugaredRecord =
-    { repr : Option (Info, Expr)
+    { repr : Option (Info, MExpr)
     , constructor : Option (Info, {v: Name, i: Info})
     , fragment : Option (Info, {v: String, i: Info})
-    , ty : Option (Info, Type)
+    , ty : Option (Info, MType)
     , base : Option (Info, {v: Name, i: Info})
-    , wrap : Option (Info, Expr)
+    , wrap : Option (Info, MExpr)
     } in
   type TokenDeclPropertyMass =
-    { repr : [(Info, Res Expr)]
+    { repr : [(Info, Res MExpr)]
     , constructor : [(Info, Res {v: Name, i: Info})]
     , fragment : [(Info, Res {v: String, i: Info})]
-    , ty : [(Info, Res Type)]
+    , ty : [(Info, Res MType)]
     , base : [(Info, Res {v: Name, i: Info})]
-    , wrap : [(Info, Res Expr)]
+    , wrap : [(Info, Res MExpr)]
     , unknown : [Info]
     } in
   let emptyTokenDeclPropertyMass : TokenDeclPropertyMass =
@@ -435,7 +438,7 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
         else None () in
       match name with Some name then
         let name: {v: Name, i: Info} = name in
-        let wrap: (Expr -> Expr) -> Expr -> Expr = match record.wrap with Some (_, f)
+        let wrap: all a. (a -> MExpr) -> a -> MExpr = match record.wrap with Some (_, f)
           then lam inner. lam e. app_ f (inner e)
           else lam f. f in
         switch (record.repr, record.constructor, record.base)
