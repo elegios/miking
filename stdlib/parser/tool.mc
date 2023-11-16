@@ -106,8 +106,8 @@ let runParserGenerator : {synFile : String, outFile : String} -> () = lam args.
   con ProdTop : {v: Name, i: Info} -> GenLabel in
   con ProdInternal : {name: {v: Name, i: Info}, info: Info} -> GenLabel in
 
-  let asDyn_ : use Ast in MExpr -> MExpr = app_ (var_ "asDyn") in
-  let fromDyn_ : use Ast in MExpr -> MExpr = app_ (var_ "fromDyn") in
+  let asDyn_ : MExpr -> MExpr = app_ (var_ "asDyn") in
+  let fromDyn_ : MExpr -> MExpr = app_ (var_ "fromDyn") in
 
   let filename = args.synFile in
   let destinationFile = args.outFile in
