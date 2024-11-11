@@ -1,5 +1,5 @@
 -- The main file of the MLang pipline.
--- The semantic function `compileMLangToOcaml`, takes a filepath as input. 
+-- The semantic function `compileMLangToOcaml`, takes a filepath as input.
 -- It then puts the program at this file through the MLang pipeline and then
 -- compiles it to OCaml.
 
@@ -8,6 +8,7 @@ include "fileutils.mc"
 include "compile.mc"
 include "sys.mc"
 include "map.mc"
+include "json.mc"
 
 include "compile.mc"
 include "boot-parser.mc"
@@ -18,6 +19,7 @@ include "include-handler.mc"
 include "language-composer.mc"
 include "const-transformer.mc"
 include "postprocess.mc"
+include "language-graph.mc"
 
 include "mexpr/eval.mc"
 include "mexpr/builtin.mc"
@@ -25,15 +27,15 @@ include "mexpr/ast-builder.mc"
 include "mexpr/phase-stats.mc"
 include "mexpr/pprint.mc"
 
-lang MLangPipeline = MLangCompiler + BootParserMLang + 
+lang MLangPipeline = MLangCompiler + BootParserMLang +
                      MLangSym + MLangCompositionCheck +
-                     MExprPrettyPrint + MExprEval + MExprEq + 
+                     MExprPrettyPrint + MExprEval + MExprEq +
                      MLangConstTransformer + MLangIncludeHandler +
                      PhaseStats + LanguageComposer + PostProcess
 
   sem myEval : Expr -> Expr
   sem myEval =| e ->
-    eval (evalCtxEmpty ()) e 
+    eval (evalCtxEmpty ()) e
 
   -- TODO: re-add 'eval' through mlang-pipelineO
 
@@ -41,33 +43,38 @@ lang MLangPipeline = MLangCompiler + BootParserMLang +
   sem compileMLangToOcaml options runner =| filepath ->
     let log = mkPhaseLogState options.debugPhases in
 
-    let p = parseAndHandleIncludes filepath in 
+    let p = parseAndHandleIncludes filepath in
     endPhaseStats log "parsing-include-handling" uunit_;
 
     let p = constTransformProgram builtin p in
     endPhaseStats log "const-transformation" uunit_;
 
-    let p = composeProgram p in 
+    (if options.debugLanguageGraph then
+      -- use LangGraph in print (genForProgram p)
+      use LangGraph in print (json2string (jsonGenForProgram p))
+    else ());
+
+    let p = composeProgram p in
     endPhaseStats log "language-inclusion-generation" uunit_;
 
-    match symbolizeMLang symEnvDefault p with (_, p) in 
+    match symbolizeMLang symEnvDefault p with (_, p) in
     endPhaseStats log "symbolization" uunit_;
 
-    match result.consume (checkComposition p) with (_, res) in 
+    match result.consume (checkComposition p) with (_, res) in
     endPhaseStats log "composition-check" uunit_;
 
-    switch res 
-      case Left errs then 
+    switch res
+      case Left errs then
         iter raiseError errs ;
         never
       case Right env then
-        let ctx = _emptyCompilationContext env in 
-        let res = result.consume (compile ctx p) in 
-        match res with (_, rhs) in 
+        let ctx = _emptyCompilationContext env in
+        let res = result.consume (compile ctx p) in
+        match res with (_, rhs) in
         match rhs with Right expr in
         endPhaseStats log "mlang-mexpr-lower" expr;
 
-        let expr = postprocess env.semSymMap expr in 
+        let expr = postprocess env.semSymMap expr in
         endPhaseStats log "postprocess" expr;
 
         -- printLn (expr2str expr);

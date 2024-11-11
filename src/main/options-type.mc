@@ -11,6 +11,7 @@ type Options = {
   debugShallow : Bool,
   debugConstantFold : Bool,
   debugPhases : Bool,
+  debugLanguageGraph : Bool,
   exitBefore : Bool,
   disablePruneExternalUtests : Bool,
   disablePruneExternalUtestsWarning : Bool,

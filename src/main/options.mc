@@ -14,6 +14,7 @@ let optionsDefault : Options = {
   debugShallow = false,
   debugConstantFold = false,
   debugPhases = false,
+  debugLanguageGraph = false,
   exitBefore = false,
   disablePruneExternalUtests = false,
   disablePruneExternalUtestsWarning = false,

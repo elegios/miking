@@ -39,6 +39,10 @@ let optionsConfig : ParseConfig Options = [
     "Show debug and profiling information about each pass",
     lam p: ArgPart Options.
       let o: Options = p.options in {o with debugPhases = true}),
+  ([("--debug-language-graph", "", "")],
+    "Print a GraphViz dot graph for the language fragments and their include relations",
+    lam p: ArgPart Options.
+      let o: Options = p.options in {o with debugLanguageGraph = true}),
   ([("--exit-before", "", "")],
     "Exit before evaluation or compilation",
     lam p: ArgPart Options.
