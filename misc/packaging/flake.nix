@@ -13,6 +13,7 @@
         buildInputs = [
           pkgs.tup
           pkgs.ocamlformat
+          pkgs.gdb
         ];
       };
     in {

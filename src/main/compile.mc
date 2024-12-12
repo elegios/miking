@@ -35,13 +35,14 @@ lang MCoreCompile =
   MExprHoles +
   MExprCmp +
   MExprSym + MExprRemoveTypeAscription + MExprTypeCheck +
-  MExprUtestGenerate + MExprRuntimeCheck + MExprProfileInstrument +
+  MExprUtestGenerate + MExprRuntimeCheck + MExprProfileInstrument + MExprTypeAnnot +
   MExprPrettyPrint +
   MExprLowerNestedPatterns +
   MExprConstantFold +
   OCamlTryWithWrap + MCoreCompileLang + PhaseStats +
   SpecializeCompile +
-  PprintTyAnnot + HtmlAnnotator
+  PprintTyAnnot + HtmlAnnotator +
+  MExprToJson
 end
 
 lang TyAnnotFull = MExprPrettyPrint + TyAnnot + HtmlAnnotator + MetaVarTypePrettyPrint
@@ -63,7 +64,7 @@ let insertTunedOrDefaults = lam options : Options. lam ast. lam file.
 
 let compileWithUtests = lam options : Options. lam sourcePath. lam ast.
   use MCoreCompile in
-    let log = mkPhaseLogState options.debugPhases in
+    let log = mkPhaseLogState options.debugDumpPhases options.debugPhases in
 
     -- If option --debug-profile, insert instrumented profiling expressions
     -- in AST
@@ -124,9 +125,13 @@ let compileWithUtests = lam options : Options. lam sourcePath. lam ast.
         , generalOptimizations = not options.disableJsGeneralOptimizations
         , tailCallOptimizations = not options.disableJsTCO
         } ast sourcePath
-      else compileMCore ast
-        { debugTypeAnnot = lam ast. if options.debugTypeAnnot then printLn (expr2str ast) else ()
-        , debugGenerate = lam ocamlProg. if options.debugGenerate then printLn ocamlProg else ()
+      else
+        let ast = typeAnnot ast in
+        endPhaseStatsExpr log "type-annot" ast;
+        -- If option --debug-type-annot, then pretty-print the AST
+        (if options.debugTypeAnnot then printLn (expr2str ast) else ());
+        compileMCore ast
+        { debugGenerate = lam ocamlProg. if options.debugGenerate then printLn ocamlProg else ()
         , exitBefore = lam. if options.exitBefore then exit 0 else ()
         , postprocessOcamlTops = lam tops. if options.runtimeChecks then wrapInTryWith tops else tops
         , compileOcaml = ocamlCompile options sourcePath
@@ -151,7 +156,7 @@ let compile = lam files. lam options : Options. lam args.
     iter (compileExtendedMLangToOcaml options compileWithUtests) files
   else
     let compileFile = lam file.
-      let log = mkPhaseLogState options.debugPhases in
+      let log = mkPhaseLogState options.debugDumpPhases options.debugPhases in
       let ast = parseParseMCoreFile {
         keepUtests = options.runTests,
         pruneExternalUtests = not options.disablePruneExternalUtests,
