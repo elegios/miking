@@ -17,7 +17,7 @@ include "eq.mc"
 -- The base fragment that includes the keyword maker, but
 -- no checks for incorrect bindings in e.g. let or lam.
 -- See the separate fragments to include this.
-lang KeywordMakerBase = VarAst + AppAst + ConTypeAst + AppTypeAst
+lang KeywordMakerBase = VarAst + AppAst + ConTypeAst + VarTypeAst + AppTypeAst
   sem isKeyword =
   | _ -> false
 
@@ -77,6 +77,12 @@ lang KeywordMakerBase = VarAst + AppAst + ConTypeAst + AppTypeAst
          else makeKeywordError r.info noArgs (length args) ident
        else never
      else TyCon r
+  | TyVar r ->
+    let ident = nameGetStr r.ident in
+    match matchTypeKeywordString r.info ident with Some (noArgs, f) then
+      if eqi noArgs (length args) then f args
+      else makeKeywordError r.info noArgs (length args) ident
+    else TyVar r
   | ty -> smap_Type_Type (makeTypeKeywords []) ty
 
 end
