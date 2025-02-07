@@ -122,6 +122,10 @@ lang MCoreLoader
   sem _preTypecheck loader decl = | _ -> (loader, decl)
   sem _postTypecheck : Loader -> Decl -> Hook -> (Loader, Decl)
   sem _postTypecheck loader decl = | _ -> (loader, decl)
+  sem _preBuildFullAst : Loader -> Hook -> Loader
+  sem _preBuildFullAst loader = | _ -> loader
+  sem _postBuildFullAst : Loader -> Expr -> Hook -> Expr
+  sem _postBuildFullAst loader ast = | _ -> ast
 end
 
 -- Use MCore-style path resolution, e.g., using libraries set in
@@ -179,7 +183,11 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
   sem _setTCEnv tcEnv = | Loader x -> Loader {x with tcEnv = tcEnv}
 
   sem getDecls = | Loader x -> x.decls
-  sem buildFullAst = | Loader x -> foldr (lam decl. lam cont. declAsExpr cont decl) unit_ x.decls
+  sem buildFullAst = | loader & Loader x ->
+    match foldl (lam loader. lam cb. _preBuildFullAst loader cb) loader x.hooks
+      with loader & Loader x in
+    let ast = foldr (lam decl. lam cont. declAsExpr cont decl) unit_ x.decls in
+    foldl (lam ast. lam cb. _postBuildFullAst loader ast cb) ast x.hooks
 
   sem _fileType = | _ ++ ".mc" -> FMCore ()
 
