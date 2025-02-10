@@ -13,12 +13,12 @@ lang DeclTypeCheck = TypeCheck + DeclAst
   sem typeCheckDecl : TCEnv -> Decl -> (TCEnv, Decl)
 end
 
-lang DeclLetTypeCheck = DeclTypeCheck + LetDeclAst + LamAst + FunTypeAst + 
+lang DeclLetTypeCheck = DeclTypeCheck + LetDeclAst + LamAst + FunTypeAst +
                         ResolveType + SubstituteUnknown +
-                        NonExpansive + MetaVarDisableGeneralize + 
+                        NonExpansive + MetaVarDisableGeneralize +
                         PropagateTypeAnnot + SubstituteNewReprs
   sem typeCheckDecl env =
-  | DeclLet d -> 
+  | DeclLet d ->
     -- A DeclLet is treated exactly as a TmLet in the MExpr type checker.
     let newLvl = addi 1 env.currentLvl in
     let tyAnnot = resolveType d.info env false d.tyAnnot in
@@ -45,7 +45,7 @@ lang DeclLetTypeCheck = DeclTypeCheck + LetDeclAst + LamAst + FunTypeAst +
         (body, tyBody)
     with (body, tyBody) in
 
-    let env = _insertVar d.ident tyBody env in 
+    let env = _insertVar d.ident tyBody env in
 
     (env, DeclLet {d with body = body,
                           tyAnnot = tyAnnot,
@@ -59,18 +59,18 @@ lang DeclUtestTypeCheck = DeclTypeCheck + UtestDeclAst
     let expected = typeCheckExpr env t.expected in
     let tusing = optionMap (typeCheckExpr env) t.tusing in
 
-    (switch tusing 
-      case Some tu then 
-        unify env [infoTm test, infoTm expected, infoTm tu] 
+    (switch tusing
+      case Some tu then
+        unify env [infoTm test, infoTm expected, infoTm tu]
           (tyarrows_ [tyTm test, tyTm expected, tybool_]) (tyTm tu)
-      case None _ then 
+      case None _ then
         unify env [infoTm test, infoTm expected] (tyTm test) (tyTm expected)
     end);
     (env, DeclUtest {t with test = test, expected = expected, tusing = tusing})
 end
 
 lang DeclConDefTypeCheck = DeclTypeCheck + DataDeclAst + DataTypeCheck
-  sem typeCheckDecl env = 
+  sem typeCheckDecl env =
   | DeclConDef t ->
     let tyIdent = resolveType t.info env false t.tyIdent in
     let tyIdent = substituteNewReprs env tyIdent in
@@ -82,24 +82,24 @@ lang DeclConDefTypeCheck = DeclTypeCheck + DataDeclAst + DataTypeCheck
       mapInsert target tydeps
         (setFold (lam m. lam t. mapInsert t (setOfSeq nameCmp [target]) m)
                  (mapEmpty nameCmp) tydeps) in
-                 
+
     let env = {env with conEnv = mapInsert t.ident (0, tyIdent) env.conEnv,
                         typeDeps = mapUnionWith setUnion tydeps env.typeDeps,
                         conDeps = mapInsertWith setUnion target
-                               (setOfSeq nameCmp [t.ident]) env.conDeps} in 
+                               (setOfSeq nameCmp [t.ident]) env.conDeps} in
 
     (env, DeclConDef {t with tyIdent = tyIdent})
 end
 
-lang DeclRecLetsTypeCheck = DeclTypeCheck + RecLetsDeclAst + 
+lang DeclRecLetsTypeCheck = DeclTypeCheck + RecLetsDeclAst +
                             MetaVarDisableGeneralize + PropagateTypeAnnot +
-                            SubstituteUnknown + ResolveType + 
+                            SubstituteUnknown + ResolveType +
                             SubstituteNewReprs
   sem typeCheckDecl env =
   | DeclRecLets t ->
     -- NOTE(aathn, 2024-05-24): This code assumes that each recursive let-binding
     -- is a syntactic lambda, so that generalization is always safe.
-    let newLvl = 0 in 
+    let newLvl = 0 in
     -- First: Generate a new environment containing the recursive bindings
     let recLetEnvIteratee = lam acc. lam b: RecLetBinding.
       let tyAnnot = resolveType t.info env false b.tyAnnot in
@@ -142,15 +142,15 @@ lang DeclRecLetsTypeCheck = DeclTypeCheck + RecLetsDeclAst +
 end
 
 
-lang DeclSemTypeCheck = SemDeclAst + ResolveType + DeclTypeCheck + 
-                        SubstituteUnknown + ResolveType + SubstituteNewReprs + 
+lang DeclSemTypeCheck = SemDeclAst + ResolveType + DeclTypeCheck +
+                        SubstituteUnknown + ResolveType + SubstituteNewReprs +
                         PatTypeCheck
   sem typeCheckSemDecls : TCEnv -> [DeclSemType] -> (TCEnv, [DeclSemType])
   sem typeCheckSemDecls env =
-  | sems -> 
-    -- First: Generate a new environment a type variable for each semantic 
+  | sems ->
+    -- First: Generate a new environment a type variable for each semantic
     -- function.
-    let semIteratee = lam acc. lam t : DeclSemType. 
+    let semIteratee = lam acc. lam t : DeclSemType.
       let tyAnnot = resolveType t.info env false t.tyAnnot in
       let tyAnnot = substituteNewReprs env tyAnnot in
       let tyBody = substituteUnknown t.info {env with currentLvl = 0} (Poly ()) tyAnnot in
@@ -166,41 +166,41 @@ lang DeclSemTypeCheck = SemDeclAst + ResolveType + DeclTypeCheck +
     let newEnv = {recLetEnv with currentLvl = 0, tyVarEnv = newTyVarEnv} in
 
     -- Second: Type check the body of each binding in the new environment
-    let typeCheckCase 
+    let typeCheckCase
       : Type -> TCEnv -> {pat : Pat, thn : Expr} -> {pat : Pat, thn : Expr}
-      = lam targetTy. lam env. lam c : {pat : Pat, thn : Expr}. 
+      = lam targetTy. lam env. lam c : {pat : Pat, thn : Expr}.
       match typeCheckPat env (mapEmpty nameCmp) c.pat with (patEnv, pat) in
-      let env = {env with varEnv = mapUnion env.varEnv patEnv} in 
+      let env = {env with varEnv = mapUnion env.varEnv patEnv} in
       unify env [NoInfo (), NoInfo ()] (tyPat pat) targetTy;
-      let thn = typeCheckExpr env c.thn in 
+      let thn = typeCheckExpr env c.thn in
       {pat = pat, thn = thn}
     in
 
-    let typeCheckSem = lam env : TCEnv. lam semType : DeclSemType. 
-      match semType.args with Some args in 
+    let typeCheckSem = lam env : TCEnv. lam semType : DeclSemType.
+      match semType.args with Some args in
 
-      let insertArg : TCEnv -> {ident : Name, tyAnnot : Type} -> (TCEnv, Type) = 
-        lam env. lam a. 
+      let insertArg : TCEnv -> {ident : Name, tyAnnot : Type} -> (TCEnv, Type) =
+        lam env. lam a.
 
-        let resultTy = substituteUnknown (NoInfo ()) env (Mono ()) a.tyAnnot in 
-        let resultEnv = _insertVar a.ident resultTy env in 
+        let resultTy = substituteUnknown (NoInfo ()) env (Mono ()) a.tyAnnot in
+        let resultEnv = _insertVar a.ident resultTy env in
         (resultEnv, resultTy)
       in
 
-      match mapAccumL insertArg env args with (env, tyParams) in 
+      match mapAccumL insertArg env args with (env, tyParams) in
 
-      let targetTy = newmetavar (Mono ()) 2 (NoInfo ())  in 
+      let targetTy = newmetavar (Mono ()) 2 (NoInfo ())  in
 
       let cases = map (lam c. typeCheckCase targetTy env c) semType.cases in
 
       let headThn = (head cases).thn in
       iter (lam c. unify env [NoInfo (), NoInfo ()] (tyTm headThn) (tyTm c.thn)) (tail cases);
 
-      let resultTy = tyarrow_ targetTy (tyTm headThn) in 
-      let resultTy = foldr tyarrow_ resultTy tyParams in 
+      let resultTy = tyarrow_ targetTy (tyTm headThn) in
+      let resultTy = foldr tyarrow_ resultTy tyParams in
       (env, {semType with cases = cases, tyBody = resultTy})
     in
-    match mapAccumL typeCheckSem newEnv sems with (newEnv, sems) in 
+    match mapAccumL typeCheckSem newEnv sems with (newEnv, sems) in
 
     let envIteratee = lam acc. lam s.
       match gen env.currentLvl acc.1 s.tyBody with (tyBody, vars) in
@@ -209,64 +209,64 @@ lang DeclSemTypeCheck = SemDeclAst + ResolveType + DeclTypeCheck +
       ((newEnv, newTyVars), {s with tyBody = tyBody})
     in
     match mapAccumL envIteratee (env, tyVars) sems with ((env, _), sems) in
-  
+
     (env, sems)
 end
 
 lang DeclLangTypeCheck = DeclTypeCheck + LangDeclAst + SemDeclAst + SynDeclAst +
                          TypeDeclAst + DeclSemTypeCheck
-  sem typeCheckDecl env = 
-  | DeclLang d -> 
-    let typeDecls = mapOption (lam d. match d with DeclType d then Some (DeclType d) else None ()) d.decls in 
-    let synDecls = mapOption (lam d. match d with DeclSyn d then Some (DeclSyn d) else None ()) d.decls in 
-    let semDeclTypes = mapOption (lam d. match d with DeclSem d then Some d else None ()) d.decls in 
+  sem typeCheckDecl env =
+  | DeclLang d ->
+    let typeDecls = mapOption (lam d. match d with DeclType d then Some (DeclType d) else None ()) d.decls in
+    let synDecls = mapOption (lam d. match d with DeclSyn d then Some (DeclSyn d) else None ()) d.decls in
+    let semDeclTypes = mapOption (lam d. match d with DeclSem d then Some d else None ()) d.decls in
 
-    match mapAccumL typeCheckDecl env typeDecls with (env, typeDecls) in 
+    match mapAccumL typeCheckDecl env typeDecls with (env, typeDecls) in
     match mapAccumL typeCheckDecl env synDecls with (env, synDecls) in
-    match typeCheckSemDecls env semDeclTypes with (env, semDeclTypes) in 
+    match typeCheckSemDecls env semDeclTypes with (env, semDeclTypes) in
 
 
-    let semDecls = map (lam x. DeclSem x) semDeclTypes in 
+    let semDecls = map (lam x. DeclSem x) semDeclTypes in
 
     (env, DeclLang {d with decls = join [typeDecls, synDecls, semDecls]})
 end
 
 lang DeclTypeTypeCheck = DeclTypeCheck + TypeDeclAst + VariantTypeAst + ResolveType
   sem typeCheckDecl env =
-  | DeclType d ->   
+  | DeclType d ->
     -- A DeclType is treated exactly as a TmType in the MExpr type checker.
     let tyIdent = resolveType d.info env false d.tyIdent in
     -- let newLvl = match tyIdent with !TyVariant _ then addi 1 env.currentLvl else 0 in
     -- figure out whether to keep this level
     let newTyConEnv = mapInsert d.ident (0, d.params, tyIdent) env.tyConEnv in
 
-    let env = {env with tyConEnv = newTyConEnv} in 
+    let env = {env with tyConEnv = newTyConEnv} in
 
     (env, DeclType {d with tyIdent = tyIdent})
 end
 
 lang DeclSynTypeCheck = DeclTypeCheck + SynDeclAst + ResolveType
-  sem typeCheckDecl env = 
+  sem typeCheckDecl env =
   | DeclSyn d ->
-    -- We add a tyConEnv to the env if this is the base syn definition. 
+    -- We add a tyConEnv to the env if this is the base syn definition.
     let env = if null d.includes then
       {env with tyConEnv = mapInsert d.ident (0, d.params, tyvariant_ []) env.tyConEnv}
     else
       env
-    in 
+    in
 
     let typeCheckDef = lam env. lam def.
-      let tyIdent = resolveType d.info env false def.tyIdent in 
-      let tyArrow = TyArrow {from = tyIdent, to = ntycon_ d.ident, info = d.info} in 
-      let env = {env with conEnv = mapInsert def.ident (0, tyArrow) env.conEnv} in 
+      let tyIdent = resolveType d.info env false def.tyIdent in
+      let tyArrow = TyArrow {from = tyIdent, to = ntycon_ d.ident, info = d.info} in
+      let env = {env with conEnv = mapInsert def.ident (0, tyArrow) env.conEnv} in
       (env, {def with tyIdent = tyIdent})
-    in 
+    in
 
-    match mapAccumL typeCheckDef env d.defs with (env, defs) in 
+    match mapAccumL typeCheckDef env d.defs with (env, defs) in
     (env, DeclSyn {d with defs = defs})
 end
 
-lang DeclExtTypeCheck = DeclTypeCheck + ExtDeclAst + ResolveType 
+lang DeclExtTypeCheck = DeclTypeCheck + ExtDeclAst + ResolveType
   sem typeCheckDecl env =
   | DeclExt t ->
     -- TODO(vipa, 2023-06-15): Error if a RepType shows up in an external definition?
@@ -275,36 +275,134 @@ lang DeclExtTypeCheck = DeclTypeCheck + ExtDeclAst + ResolveType
     (env, DeclExt {t with tyIdent = tyIdent})
 end
 
+lang DeclReprTypeCheck = DeclTypeCheck + ReprMLangDeclAst + ResolveType + WildToMeta
+  sem typeCheckDecl env =
+  | DeclRepr x ->
+    let pat = resolveType x.info env false x.pat in
+    let repr = resolveType x.info env false x.repr in
+    let env = {env with reptypes = {env.reptypes with reprEnv = mapInsert x.ident {vars = x.vars, pat = pat, repr = repr} env.reptypes.reprEnv}} in
+    ( env
+    , DeclRepr {x with pat = pat, repr = repr}
+    )
+end
+
+lang DeclOpTypeCheck = DeclTypeCheck + OpMLangDeclAst + ResolveType + SubstituteNewReprs
+  sem typeCheckDecl env =
+  | DeclOp x ->
+    let lvl = env.currentLvl in
+    let tyAnnot = resolveType x.info env false x.tyAnnot in
+    let tyAnnot = substituteNewReprs env tyAnnot in
+    let env = {env with reptypes = {env.reptypes with opNamesInScope = mapInsert x.ident (None ()) env.reptypes.opNamesInScope}} in
+    ( _insertVar x.ident tyAnnot env
+    , DeclOp {x with tyAnnot = tyAnnot}
+    )
+end
+
+lang DeclOpImplTypeCheck = DeclTypeCheck + OpImplDeclAst + ResolveType + PropagateTypeAnnot + SubstituteNewReprs + WildToMeta + ApplyReprSubsts + SubstituteUnknown
+  sem typeCheckDecl env =
+  | DeclOpImpl x ->
+    match mapLookup x.ident env.varEnv with Some ty then
+      if optionIsSome (mapLookup x.ident env.reptypes.opNamesInScope) then
+        let newLvl = addi 1 env.currentLvl in
+        let typeCheckBody = lam env.
+          let newEnv = {env with currentLvl = newLvl} in
+          let specTypeInfo = infoTy x.specType in
+          let opTypeInfo = infoTy ty in
+          -- NOTE(vipa, 2023-06-30): First we want to check that
+          -- `specType` is a stricter version of the original op-decl's
+          -- type, modulo wildcards. We instantiate the op-decl's type,
+          -- strip `specType`, and unify the two.
+          let ty = inst x.info newLvl ty in
+          let ty = substituteNewReprs env ty in
+          let specType = resolveType (infoTy x.specType) env false x.specType in
+          let specType = substituteUnknown x.info newEnv (Poly ()) specType in
+          let specType = inst x.info newLvl specType in
+          let specType = substituteNewReprs env specType in
+          let specType = (wildToMeta newLvl (setEmpty nameCmp) specType).1 in
+          -- NOTE(vipa, 2023-07-03): This may do some unifications from
+          -- substitutions, as a side-effect, so we do it here rather
+          -- than later.
+          let reprType = applyReprSubsts newEnv specType in
+          unify newEnv [opTypeInfo, specTypeInfo] ty (removeReprSubsts specType);
+          -- NOTE(vipa, 2023-06-30): Next we want to type-check the body
+          -- of the impl against the strictest type signature we have
+          -- available: `specType` after filling in wildcards and
+          -- applying explicit repr substitutions. We get there by
+          -- generalizing `reprType`, then stripping it.
+          match gen env.currentLvl (mapEmpty nameCmp) reprType with (reprType, genVars) in
+          match stripTyAll reprType with (vars, reprType) in
+          let newTyVars = foldr (lam v. mapInsert v.0 (newLvl, v.1)) env.tyVarEnv vars in
+          let newEnv = {env with currentLvl = newLvl, tyVarEnv = newTyVars} in
+          match captureDelayedReprUnifications env
+            (lam. typeCheckExpr newEnv (propagateTyAnnot (x.body, reprType)))
+            with (body, delayedReprUnifications) in
+          unify newEnv [specTypeInfo, infoTm body] reprType (tyTm body);
+
+          -- NOTE(vipa, 2023-08-15): Later analysis requires that
+          -- `specType` references the reprs that exist in the alt-body,
+          -- thus we generalize it here
+          match gen env.currentLvl (mapFromSeq nameCmp genVars) specType with (specType, _) in
+          {x with body = body, delayedReprUnifications = delayedReprUnifications, specType = specType} in
+        match withNewReprScope env (lam env. typeCheckBody env)
+          with (x, reprScope, []) in
+        ( env
+        , DeclOpImpl
+          { x with reprScope = reprScope
+          , metaLevel = newLvl
+          }
+        )
+      else
+        let msg = join
+          [ "* Encountered implementation of a non-operation: "
+          , nameGetStr x.ident, "\n"
+          , "* When type checking the expression\n"
+          ] in
+        errorSingle [x.info] msg
+    else
+      let msg = join [
+        "* Encountered an unbound variable: ",
+        nameGetStr x.ident, "\n",
+        "* When type checking the expression\n"
+      ] in
+      errorSingle [x.info] msg
+end
+
+lang TypeCheckRepTypeDecls
+  = DeclOpTypeCheck
+  + DeclOpImplTypeCheck
+  + DeclReprTypeCheck
+end
+
 lang ProgramTypeCheck = DeclTypeCheck + MLangTopLevel
   sem typeCheckProgram : MLangProgram -> MLangProgram
   sem typeCheckProgram =
-  | program -> 
-    match mapAccumL typeCheckDecl typcheckEnvDefault program.decls with (env, decls) in 
-    let expr = typeCheckExpr env program.expr in 
+  | program ->
+    match mapAccumL typeCheckDecl typcheckEnvDefault program.decls with (env, decls) in
+    let expr = typeCheckExpr env program.expr in
     {decls = decls, expr = expr}
 end
 
-lang MLangTypeCheck = ProgramTypeCheck + MExprTypeCheck + MLangPrettyPrint + 
+lang MLangTypeCheck = ProgramTypeCheck + MExprTypeCheck + MLangPrettyPrint +
                       DeclLetTypeCheck + DeclTypeTypeCheck + DeclSynTypeCheck +
                       DeclLangTypeCheck + DeclUtestTypeCheck + DeclConDefTypeCheck +
                       DeclRecLetsTypeCheck + DeclExtTypeCheck
 
 end
 
-lang MyPPrintLang = MLangPrettyPrint + MExprPrettyPrint + MetaVarTypePrettyPrint 
+lang MyPPrintLang = MLangPrettyPrint + MExprPrettyPrint + MetaVarTypePrettyPrint
 end
 
 mexpr
-use MLangTypeCheck in 
+use MLangTypeCheck in
 use MyPPrintLang in
-use MLangSym in  
+use MLangSym in
 
 let p : MLangProgram = {
   decls = [(decl_ulet_ "x" (int_ 10))],
   expr = addi_ (var_ "x") (int_ 1)
-} in 
+} in
 
-typeCheckProgram p ; 
+typeCheckProgram p ;
 
 let p : MLangProgram = {
   decls = [
@@ -312,9 +410,9 @@ let p : MLangProgram = {
     decl_let_ "x" (tycon_ "Foo") (int_ 50)
   ],
   expr = (var_ "x")
-} in 
+} in
 
-typeCheckProgram p ; 
+typeCheckProgram p ;
 
 let p : MLangProgram = {
   decls = [
@@ -323,13 +421,13 @@ let p : MLangProgram = {
     ],
     decl_let_ "x" (tycon_ "SomeSyn") (conapp_ "Foo" (int_ 10))
   ],
-  expr = matchex_ 
+  expr = matchex_
       (var_ "x")
       (pcon_ "Foo" (pvar_ "x"))
       (addi_ (var_ "x") (int_ 1))
-} in 
+} in
 
-typeCheckProgram p ; 
+typeCheckProgram p ;
 
 let p : MLangProgram = {
   decls = [
@@ -346,9 +444,9 @@ let p : MLangProgram = {
   -- expr = app_ (var_ "f") (char_ 'c')
   -- expr = app_ (var_ "f") (int_ 1)
   expr = appf2_ (var_ "g") (int_ 1) (int_ 3)
-} in 
+} in
 
-let p = typeCheckProgram p in 
+let p = typeCheckProgram p in
 -- printLn (mlang2str p);
 
 let p : MLangProgram = {
@@ -357,27 +455,27 @@ let p : MLangProgram = {
     decl_utestu_ (int_ 1) (int_ 2) (uconst_ (CNeqi ()))
   ],
   expr = uunit_
-} in 
+} in
 
-let p = typeCheckProgram p in 
+let p = typeCheckProgram p in
 
-let odd = (ulam_ "x" 
-  (if_ 
+let odd = (ulam_ "x"
+  (if_
     (eqi_ (var_ "x") (int_ 0))
     (false_)
     (appf1_ (var_ "even") (subi_ (var_ "x") (int_ 1)))))
-in 
-let even = (ulam_ "x" 
-  (if_ 
+in
+let even = (ulam_ "x"
+  (if_
     (eqi_ (var_ "x") (int_ 0))
     (true_)
     (appf1_ (var_ "odd") (subi_ (var_ "x") (int_ 1)))))
-in 
+in
 let p : MLangProgram = {
     decls = [
         decl_ureclets_ [("odd", odd), ("even", even)]
     ],
     expr = appf1_ (var_ "odd") (int_ 9)
-} in 
-let p = typeCheckProgram p in 
+} in
+let p = typeCheckProgram p in
 ()

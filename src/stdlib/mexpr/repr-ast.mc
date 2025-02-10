@@ -1,4 +1,5 @@
 include "mexpr/ast.mc"
+include "mlang/ast.mc"
 
 -- NOTE(vipa, 2023-06-12): We assume a certain collection size and
 -- explicitly evaluate the cost expression
@@ -70,7 +71,7 @@ lang ReprSubstAst = Ast
    (acc, TySubst { x with arg = arg })
 end
 
-lang OpDeclAst = Ast + LetAst + NeverAst + UnknownTypeAst
+lang OpDeclAst = Ast
   syn Expr =
   | TmOpDecl { info : Info, ident : Name, tyAnnot : Type, ty : Type, inexpr : Expr }
 
@@ -95,6 +96,43 @@ lang OpDeclAst = Ast + LetAst + NeverAst + UnknownTypeAst
   | TmOpDecl x ->
     match f acc x.tyAnnot with (env, tyAnnot) in
     (env, TmOpDecl {x with tyAnnot = tyAnnot})
+end
+
+lang OpMLangDeclAst = DeclAst
+  syn Decl =
+  | DeclOp
+    { ident : Name
+    , tyAnnot : Type
+    , info : Info
+    }
+
+  sem infoDecl =
+  | DeclOp x -> x.info
+
+  sem declWithInfo info =
+  | DeclOp x -> DeclOp {x with info = info}
+
+  sem smapAccumL_Decl_Type f acc =
+  | DeclOp x ->
+    match f acc x.tyAnnot with (acc, tyAnnot) in
+    (acc, DeclOp {x with tyAnnot = tyAnnot})
+end
+
+lang OpDeclAsDecl = ExprAsDecl + OpDeclAst + OpMLangDeclAst
+  sem exprAsDecl =
+  | TmOpDecl x -> Some
+    ( DeclOp {ident = x.ident, tyAnnot = x.tyAnnot, info = x.info}
+    , x.inexpr
+    )
+
+  sem declAsExpr inexpr =
+  | DeclOp x -> TmOpDecl
+    { ident = x.ident
+    , tyAnnot = x.tyAnnot
+    , info = x.info
+    , ty = tyTm inexpr
+    , inexpr = inexpr
+    }
 end
 
 type ImplId = Int
@@ -134,6 +172,60 @@ lang OpImplAst = Ast
   | TmOpImpl x ->
     match f acc x.specType with (acc, specType) in
     (acc, TmOpImpl {x with specType = specType})
+end
+
+lang OpImplDeclAst = DeclAst
+  syn Decl =
+  | DeclOpImpl
+    { ident : Name
+    , implId : ImplId
+    , reprScope : Int
+    , metaLevel : Int
+    , selfCost : OpCost
+    , body : Expr
+    , specType : Type
+    , delayedReprUnifications : [(ReprVar, ReprVar)]
+    , info : Info
+    }
+
+  sem infoDecl =
+  | DeclOpImpl x -> x.info
+
+  sem declWithInfo info =
+  | DeclOpImpl x -> DeclOpImpl {x with info = info}
+
+  sem smapAccumL_Decl_Expr f acc =
+  | DeclOpImpl x ->
+    match f acc x.body with (acc, body) in
+    (acc, DeclOpImpl {x with body = body})
+
+  sem smapAccumL_Decl_Type f acc =
+  | DeclOpImpl x ->
+    match f acc x.specType with (acc, specType) in
+    (acc, DeclOpImpl {x with specType = specType})
+end
+
+lang OpImplAsDecl = ExprAsDecl + OpImplAst + OpImplDeclAst
+  sem exprAsDecl =
+  | TmOpImpl x -> Some
+    ( DeclOpImpl {ident = x.ident, implId = x.implId, reprScope = x.reprScope, metaLevel = x.metaLevel, selfCost = x.selfCost, body = x.body, specType = x.specType, delayedReprUnifications = x.delayedReprUnifications, info = x.info}
+    , x.inexpr
+    )
+
+  sem declAsExpr inexpr =
+  | DeclOpImpl x -> TmOpImpl
+    { ident = x.ident
+    , implId = x.implId
+    , reprScope = x.reprScope
+    , metaLevel = x.metaLevel
+    , selfCost = x.selfCost
+    , body = x.body
+    , specType = x.specType
+    , delayedReprUnifications = x.delayedReprUnifications
+    , info = x.info
+    , ty = tyTm inexpr
+    , inexpr = inexpr
+    }
 end
 
 lang OpVarAst = Ast
@@ -190,7 +282,52 @@ lang ReprDeclAst = Ast
     (acc, TmReprDecl {x with pat = pat, repr = repr})
 end
 
+lang ReprMLangDeclAst = DeclAst
+  syn Decl =
+  | DeclRepr
+    { ident : Name
+    , vars : [Name]
+    , pat : Type
+    , repr : Type
+    , info : Info
+    }
+
+  sem infoDecl =
+  | DeclRepr d -> d.info
+
+  sem declWithInfo info =
+  | DeclRepr d -> DeclRepr {d with info = info}
+
+  sem smapAccumL_Decl_Type f acc =
+  | DeclRepr x ->
+    match f acc x.pat with (acc, pat) in
+    match f acc x.repr with (acc, repr) in
+    (acc, DeclRepr {x with pat = pat, repr = repr})
+end
+
+lang ReprAsDecl = ExprAsDecl + ReprDeclAst + ReprMLangDeclAst
+  sem exprAsDecl =
+  | TmReprDecl x -> Some
+    ( DeclRepr {ident = x.ident, vars = x.vars, pat = x.pat, repr = x.repr, info = x.info}
+    , x.inexpr
+    )
+
+  sem declAsExpr inexpr =
+  | DeclRepr x -> TmReprDecl
+    { ident = x.ident
+    , vars = x.vars
+    , pat = x.pat
+    , repr = x.repr
+    , info = x.info
+    , inexpr = inexpr
+    , ty = tyTm inexpr
+    }
+end
+
 lang RepTypesAst = ReprTypeAst + ReprSubstAst + OpDeclAst + OpImplAst + OpVarAst + ReprDeclAst + TyWildAst
+end
+
+lang RepTypesAsDecl = OpDeclAsDecl + OpImplAsDecl + ReprAsDecl
 end
 
 type CollectedImpl = use Ast in
