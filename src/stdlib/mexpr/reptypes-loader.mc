@@ -19,6 +19,7 @@ lang MExprRepTypesSolverBase
   + MExprCmp
   + MExprPrettyPrint
   + MExprUnify
+  + MExprResymbolize
   + ReprTypeUnify
   + RepTypesAst
   + RepTypesCmp

@@ -20,6 +20,7 @@ include "mexpr/pprint.mc"
 include "mexpr/symbolize.mc"
 include "mexpr/type.mc"
 include "mexpr/type-check.mc"
+include "mexpr/resymbolize.mc"
 
 lang Monomorphize = MExprAst + MExprCmp
   -- An instantiation maps type variable identifiers to concrete types. It
@@ -205,121 +206,6 @@ lang MonomorphizeInstantiate = Monomorphize
     else TyVar t
   | TyAll t -> instantiatePolymorphicType inst t.ty
   | ty -> smap_Type_Type (instantiatePolymorphicType inst) ty
-end
-
-lang MonomorphizeResymbolize = Monomorphize
-  -- Resymbolizes all variables bound inside the provided expression. We use
-  -- this to ensure function definitions duplicated due to monomorphization end
-  -- up with distinct symbols.
-  sem resymbolizeBindings : Expr -> Expr
-  sem resymbolizeBindings =
-  | ast -> resymbolizeBindingsExpr (mapEmpty nameCmp) ast
-
-  sem resymbolizeBindingsExpr : Map Name Name -> Expr -> Expr
-  sem resymbolizeBindingsExpr nameMap =
-  | TmVar t ->
-    let newId =
-      match mapLookup t.ident nameMap with Some newId then newId
-      else t.ident
-    in
-    TmVar {t with ident = newId, ty = resymbolizeBindingsType nameMap t.ty}
-  | TmLam t ->
-    let newId = nameSetNewSym t.ident in
-    let nameMap = mapInsert t.ident newId nameMap in
-    TmLam {t with ident = newId,
-                  tyAnnot = resymbolizeBindingsType nameMap t.tyAnnot,
-                  tyParam = resymbolizeBindingsType nameMap t.tyParam,
-                  body = resymbolizeBindingsExpr nameMap t.body,
-                  ty = resymbolizeBindingsType nameMap t.ty}
-  | TmLet t ->
-    let body = resymbolizeBindingsExpr nameMap t.body in
-    let newId = nameSetNewSym t.ident in
-    let nameMap = mapInsert t.ident newId nameMap in
-    TmLet {t with ident = newId,
-                  tyAnnot = resymbolizeBindingsType nameMap t.tyAnnot,
-                  tyBody = resymbolizeBindingsType nameMap t.tyBody,
-                  body = body,
-                  inexpr = resymbolizeBindingsExpr nameMap t.inexpr,
-                  ty = resymbolizeBindingsType nameMap t.ty}
-  | TmRecLets t ->
-    let addNewIdBinding = lam nameMap. lam bind.
-      let newId = nameSetNewSym bind.ident in
-      (mapInsert bind.ident newId nameMap, {bind with ident = newId})
-    in
-    match mapAccumL addNewIdBinding nameMap t.bindings with (nameMap, bindings) in
-    let resymbolizeBind = lam bind.
-      {bind with tyAnnot = resymbolizeBindingsType nameMap bind.tyAnnot,
-                 tyBody = resymbolizeBindingsType nameMap bind.tyBody,
-                 body = resymbolizeBindingsExpr nameMap bind.body}
-    in
-    let bindings = map resymbolizeBind bindings in
-    TmRecLets {t with bindings = bindings,
-                      inexpr = resymbolizeBindingsExpr nameMap t.inexpr,
-                      ty = resymbolizeBindingsType nameMap t.ty}
-  | TmType t ->
-    let newId = nameSetNewSym t.ident in
-    let nameMap = mapInsert t.ident newId nameMap in
-    TmType {t with ident = newId,
-                   tyIdent = resymbolizeBindingsType nameMap t.tyIdent,
-                   inexpr = resymbolizeBindingsExpr nameMap t.inexpr,
-                   ty = resymbolizeBindingsType nameMap t.ty}
-  | TmConDef t ->
-    let newId = nameSetNewSym t.ident in
-    let nameMap = mapInsert t.ident newId nameMap in
-    TmConDef {t with ident = newId,
-                     inexpr = resymbolizeBindingsExpr nameMap t.inexpr,
-                     ty = resymbolizeBindingsType nameMap t.ty}
-  | TmConApp t ->
-    let newId =
-      match mapLookup t.ident nameMap with Some newId then newId
-      else t.ident
-    in
-    TmConApp {t with ident = newId,
-                     body = resymbolizeBindingsExpr nameMap t.body,
-                     ty = resymbolizeBindingsType nameMap t.ty}
-  | TmMatch t ->
-    let target = resymbolizeBindingsExpr nameMap t.target in
-    match resymbolizeBindingsPat nameMap t.pat with (thnNameMap, pat) in
-    TmMatch {t with target = target, pat = pat,
-                    thn = resymbolizeBindingsExpr thnNameMap t.thn,
-                    els = resymbolizeBindingsExpr nameMap t.els,
-                    ty = resymbolizeBindingsType nameMap t.ty}
-  | t ->
-    let t = smap_Expr_Expr (resymbolizeBindingsExpr nameMap) t in
-    let t = smap_Expr_Type (resymbolizeBindingsType nameMap) t in
-    let t = smap_Expr_TypeLabel (resymbolizeBindingsType nameMap) t in
-    withType (resymbolizeBindingsType nameMap (tyTm t)) t
-
-  sem resymbolizeBindingsPat : Map Name Name -> Pat -> (Map Name Name, Pat)
-  sem resymbolizeBindingsPat nameMap =
-  | PatNamed (t & {ident = PName id}) ->
-    let newId = nameSetNewSym id in
-    (mapInsert id newId nameMap, PatNamed {t with ident = PName newId})
-  | PatSeqEdge (t & {middle = PName id}) ->
-    let newId = nameSetNewSym id in
-    (mapInsert id newId nameMap, PatSeqEdge {t with middle = PName newId})
-  | PatCon t ->
-    match mapLookup t.ident nameMap with Some newId then
-      (nameMap, PatCon {t with ident = newId})
-    else (nameMap, PatCon t)
-  | p -> smapAccumL_Pat_Pat resymbolizeBindingsPat nameMap p
-
-  sem resymbolizeBindingsType : Map Name Name -> Type -> Type
-  sem resymbolizeBindingsType nameMap =
-  | TyCon t ->
-    match mapLookup t.ident nameMap with Some newId then
-      TyCon {t with ident = newId}
-    else TyCon t
-  | TyVar t ->
-    match mapLookup t.ident nameMap with Some newId then
-      TyVar {t with ident = newId}
-    else TyVar t
-  | TyAll t ->
-    let newId = nameSetNewSym t.ident in
-    let nameMap = mapInsert t.ident newId nameMap in
-    TyAll {t with ident = newId,
-                  ty = resymbolizeBindingsType nameMap t.ty}
-  | ty -> smap_Type_Type (resymbolizeBindingsType nameMap) ty
 end
 
 lang MonomorphizeCollect =
@@ -610,7 +496,7 @@ lang MonomorphizeCollect =
   | ty -> monoError [infoTy ty] "Constructor type does not refer to a known variant type"
 end
 
-lang MonomorphizeApply = MonomorphizeInstantiate + MonomorphizeResymbolize + AppTypeUtils
+lang MonomorphizeApply = MonomorphizeInstantiate + MExprResymbolize + AppTypeUtils
   -- Replaces polymorphic constructs with their monomorphic bindings
   -- based on the provided monomorphization environment (bottom-up).
   sem applyMonomorphization : MonoEnv -> Expr -> Expr
