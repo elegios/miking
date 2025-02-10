@@ -768,7 +768,7 @@ let defaultReprSolverOptions : ReprSolverOptions =
   , solutionCacheFile = None ()
   }
 
-lang RepTypesSolveAndReconstruct = RepTypesShallowSolverInterface + OpImplAst + VarAst + LetAst + OpDeclAst + ReprDeclAst + ReprTypeAst + UnifyPure + AliasTypeAst + PrettyPrint + ReprSubstAst + RepTypesHelpers
+lang RepTypesSolveAndReconstruct = RepTypesShallowSolverInterface + OpImplAst + VarAst + LetAst + OpDeclAst + ReprDeclAst + ReprTypeAst + UnifyPure + AliasTypeAst + PrettyPrint + ReprSubstAst + RepTypesHelpers + UnknownTypeAst
   -- Top interface, meant to be used outside --
   sem reprSolve : ReprSolverOptions -> Expr -> [Expr]
   sem reprSolve options = | tm ->
@@ -4405,7 +4405,7 @@ lang NonMemoTreeBuilder = RepTypesShallowSolverInterface + UnifyPure + RepTypesH
   syn SolverSolution a = | SSContent (SolContent a)
 
   type Relevant = VarMap Int  -- NOTE(vipa, 2024-01-21): The meta-level/repr-scope of the var
-  type Constraint = Unification
+  type RepConstraint = Unification
   type Var = Symbol
   type Val = Name
   -- NOTE(vipa, 2024-03-21): We work with strings directly (well,
@@ -4452,7 +4452,7 @@ lang NonMemoTreeBuilder = RepTypesShallowSolverInterface + UnifyPure + RepTypesH
     else None ()
 
   -- Top Query
-  type RTree a = RepTree Relevant Constraint Var Val NodeIdent (SolContent a)
+  type RTree a = RepTree Relevant RepConstraint Var Val NodeIdent (SolContent a)
   type STQContent a = [{scale : OpCost, val : RTree a}]
   syn SolverTopQuery a = | STQContent (STQContent a)
   sem initSolverTopQuery = | global ->
@@ -4731,8 +4731,8 @@ lang NonMemoTreeBuilder = RepTypesShallowSolverInterface + UnifyPure + RepTypesH
 end
 
 lang TreeSolverBase = NonMemoTreeBuilder
-  type TSTree a = RepTree Relevant Constraint Var Val NodeIdent a
-  type TSSingle a = RTSingleRec a Constraint Var Val Relevant NodeIdent
+  type TSTree a = RepTree Relevant RepConstraint Var Val NodeIdent a
+  type TSSingle a = RTSingleRec a RepConstraint Var Val Relevant NodeIdent
   type RTS = RepTreeSolution NodeIdent
 
   sem solveWork : all a. Bool -> Option RTS -> TSTree a -> a
@@ -4783,13 +4783,13 @@ lang TreeSolverBase = NonMemoTreeBuilder
       } in
     solveWorkAll debug top
 
-  sem mkEqInterface : () -> RTEqInterface Relevant Constraint Var Val
+  sem mkEqInterface : () -> RTEqInterface Relevant RepConstraint Var Val
   sem mkEqInterface = | _ ->
     { constraintEq = lam a. lam b. if uniImplies a b then uniImplies b a else false
     , relevantEq = varMapEq (lam. lam. true)
     }
 
-  sem mkPropagateInterface : () -> RTPropagateInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkPropagateInterface : () -> RTPropagateInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkPropagateInterface = | _ ->
     { constraintAnd = lam l. lam r.
       match mergeUnifications l r with Some res then Some
@@ -4830,7 +4830,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
       in Some f
     }
 
-  sem mkDebugInterface : () -> RTDebugInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkDebugInterface : () -> RTDebugInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkDebugInterface = | _ ->
     { constraintJson = lam env. lam uni.
       match unificationToDebug "" env uni with (env, uni) in
@@ -4850,7 +4850,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , identJson = nodeIdentJson
     }
 
-  sem mkCollapseLeavesInterface : () -> RTCollapseLeavesInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkCollapseLeavesInterface : () -> RTCollapseLeavesInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkCollapseLeavesInterface = | _ ->
     { constraintAnd = mergeUnifications
     , unionRelevant = varMapUnion
@@ -4865,7 +4865,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , debugInterface = mkDebugInterface ()
     }
 
-  sem mkFlattenInterface : () -> RTFlattenInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkFlattenInterface : () -> RTFlattenInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkFlattenInterface = | _ ->
     { constraintAnd = mergeUnifications
     , unionRelevant = varMapUnion
@@ -4889,14 +4889,14 @@ lang TreeSolverBase = NonMemoTreeBuilder
       res
     }
 
-  sem mkMaterializeHomogeneousInterface : () -> RTMaterializeHomogeneousInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkMaterializeHomogeneousInterface : () -> RTMaterializeHomogeneousInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkMaterializeHomogeneousInterface = | _ ->
     { constraintAnd = mergeUnifications
     , cmpVal = nameCmp
     , propagateInterface = mkPropagateInterface ()
     }
 
-  sem mkMaterializeStatelessInterface : () -> RTMaterializeStatelessInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkMaterializeStatelessInterface : () -> RTMaterializeStatelessInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkMaterializeStatelessInterface = | _ ->
     { constraintAnd = mergeUnifications
     , constraintEq = lam a. lam b. if uniImplies a b then uniImplies b a else false
@@ -4912,7 +4912,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , debugInterface = mkDebugInterface ()
     }
 
-  sem mkMaterializeLazyInterface : () -> RTMaterializeLazyInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkMaterializeLazyInterface : () -> RTMaterializeLazyInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkMaterializeLazyInterface = | _ ->
     { constraintAnd = mergeUnifications
     , unionRelevant = varMapUnion
@@ -4935,11 +4935,11 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , debugInterface = mkDebugInterface ()
     }
 
-  sem mkMaterializeConsistentInterface : () -> RTMaterializeConsistentInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkMaterializeConsistentInterface : () -> RTMaterializeConsistentInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkMaterializeConsistentInterface = | _ ->
     { partitionConsistentConstraints =
-      let f : all x. [(x, Constraint)] -> [([x], Constraint)] = lam pairs.
-        recursive let addToFirst : [([x], Constraint)] -> (x, Constraint) -> [([x], Constraint)]
+      let f : all x. [(x, RepConstraint)] -> [([x], RepConstraint)] = lam pairs.
+        recursive let addToFirst : [([x], RepConstraint)] -> (x, RepConstraint) -> [([x], RepConstraint)]
           = lam partitions. lam pair.
             match partitions with [part] ++ partitions then
               match mergeUnifications part.1 pair.1 with Some uni
@@ -4962,7 +4962,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , debugEnv = pprintEnvEmpty
     }
 
-  sem mkSolveExternallyBaseInterface : () -> RTSolveExternallyBaseInterface PprintEnv Relevant Constraint Var Val NodeIdent
+  sem mkSolveExternallyBaseInterface : () -> RTSolveExternallyBaseInterface PprintEnv Relevant RepConstraint Var Val NodeIdent
   sem mkSolveExternallyBaseInterface = | _ ->
     { constraintAnd = mergeUnifications
     , unionRelevant = varMapUnion
@@ -4977,7 +4977,7 @@ lang TreeSolverBase = NonMemoTreeBuilder
     , debugInterface = mkDebugInterface ()
     }
 
-  sem mkPartitionInternalInterface : () -> RTPartitionInternalInterface Relevant Constraint Var Val
+  sem mkPartitionInternalInterface : () -> RTPartitionInternalInterface Relevant RepConstraint Var Val
   sem mkPartitionInternalInterface = | _ ->
     { varsToRelevant = lam vars.
       { reprs = mapFromSeq _symCmp (map (lam x. (x, negi 1)) vars)
@@ -6088,8 +6088,8 @@ lang TreeSolverMixed = TreeSolverBase
     let materializeHomogeneousInterface = mkMaterializeHomogeneousInterface () in
     let debugInterface = mkDebugInterface () in
     let cmpf = lam a. lam b. if ltf a b then negi 1 else if gtf a b then 1 else 0 in
-    type Tree = RepTree Relevant Constraint Var Val NodeIdent a in
-    type Res = RTSingleRec a Constraint Var Val Relevant NodeIdent in
+    type Tree = RepTree Relevant RepConstraint Var Val NodeIdent a in
+    type Res = RTSingleRec a RepConstraint Var Val Relevant NodeIdent in
 
     (if debug then
       match rtDebugJson debugInterface pprintEnvEmpty top with (env, debug) in
@@ -6274,7 +6274,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
     , subSols : [{idxes : Set Int, scale : OpCost, sol : SolContent a}]
     }
   syn SolContent a = | SolContent (SolContentRec a)
-  type Constraint a =
+  type RepConstraint a =
     -- NOTE(vipa, 2023-12-12): 'None' means the full set
     { unfixedReprs : Map Symbol (Option (Set Name))
     -- NOTE(vipa, 2023-12-12): This will be 'None' if it's the union
@@ -6289,12 +6289,12 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
     }
   type QueryItem a =
     { scale : OpCost
-    , child: SolTreeInput (Constraint a) (ChildInfo a) (SolContent a)
+    , child: SolTreeInput (RepConstraint a) (ChildInfo a) (SolContent a)
     }
 
   type SBContent a =
     { implsPerOp : Map Name (Set (ProcOpImpl a))
-    , memo : Map (Name, Type) {reprLevels : Map Symbol Int, tree : SolTreeInput (Constraint a) (ChildInfo a) (SolContent a)}
+    , memo : Map (Name, Type) {reprLevels : Map Symbol Int, tree : SolTreeInput (RepConstraint a) (ChildInfo a) (SolContent a)}
     , nameless : NamelessState
     }
 
@@ -6477,9 +6477,9 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
         }
       else None () in
     let split
-      : all x. Constraint a
+      : all x. RepConstraint a
       -> [{spaceSize : Int, maxCost : OpCost, minCost : OpCost, token : x}]
-      -> Option ([[x]], [Constraint a])
+      -> Option ([[x]], [RepConstraint a])
       = lam constraint. lam components.
         let eitherCmp = lam l. lam r. lam a. lam b.
           let res = subi (constructorTag a) (constructorTag b) in
@@ -6519,7 +6519,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
       match optionMapAccum (unificationToDebug indent) env constraint.fixedUni with (env, uni) in
       let uni = optionGetOr "" uni in
       (env, join (snoc (map pprintUnfixed unfixed) uni)) in
-    let mergeAndFindIncompat : [Constraint a] -> Either (Map Int (Set Int)) (Constraint a) = lam constraints.
+    let mergeAndFindIncompat : [RepConstraint a] -> Either (Map Int (Set Int)) (RepConstraint a) = lam constraints.
       let res = optionFoldlM
         (lam uni. lam c. optionBind c.fixedUni (mergeUnifications uni))
         (emptyUnification ())
@@ -6554,7 +6554,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
           (mapEmpty subi)
           potentialConflicts in
         Left conflicts in
-    let interface : SolInterface (Constraint a) (ChildInfo a) PprintEnv =
+    let interface : SolInterface (RepConstraint a) (ChildInfo a) PprintEnv =
       { approxOr = constraintOr
       , eq = constraintEq
       , constrainFromAbove = lam input.
@@ -6660,7 +6660,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
       else STIConstraintTransform
         { child = subWithMeta.tree
         , fromAbove = lam x.
-          printLn "Constraint transform using this mapping:";
+          printLn "RepConstraint transform using this mapping:";
           let printMap = lam pk. lam pv. lam env. lam m.
             let pairs = mapAccumL
               (lam env. lam pair.
@@ -6701,7 +6701,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
       subWithMeta.reprLevels in
     (branch, {reprLevels = reprLevels, item = item})
 
-  sem buildQueryItemWork : all a. SBContent a -> Name -> Type -> (SBContent a, {reprLevels : Map Symbol Int, tree : SolTreeInput (Constraint a) (ChildInfo a) (SolContent a)})
+  sem buildQueryItemWork : all a. SBContent a -> Name -> Type -> (SBContent a, {reprLevels : Map Symbol Int, tree : SolTreeInput (RepConstraint a) (ChildInfo a) (SolContent a)})
   sem buildQueryItemWork branch op = | ty ->
     let perUseInImpl = lam subst. lam uni. lam acc. lam idxedOpUse.
       match acc with (branch, reprLevels) in
@@ -6739,7 +6739,7 @@ lang SATishSolver = RepTypesShallowSolverInterface + UnifyPure + RepTypesHelpers
           uni.reprs in
         (reprLevels, unfixedReprs) in
 
-    let perImpl : SBContent a -> ProcOpImpl a -> (SBContent a, Option (Map Symbol Int, SolTreeInput (Constraint a) (ChildInfo a) (SolContent a)))
+    let perImpl : SBContent a -> ProcOpImpl a -> (SBContent a, Option (Map Symbol Int, SolTreeInput (RepConstraint a) (ChildInfo a) (SolContent a)))
       = lam branch. lam impl.
         let ty = (wildToMeta impl.metaLevel (setEmpty nameCmp) ty).1 in
         match instAndSubst (infoTy impl.specType) impl.metaLevel impl.specType

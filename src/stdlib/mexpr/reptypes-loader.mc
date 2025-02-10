@@ -1,0 +1,61 @@
+include "reptypes.mc"
+include "mlang/loader.mc"
+
+lang MExprRepAnalysis
+  = MetaVarTypeCmp
+  + MExprCmp
+  + MExprPrettyPrint
+  + MExprRepTypesAnalysis
+  + RepTypesCmp
+  + RepTypesPrettyPrint
+end
+
+lang MExprRepTypesSolverBase
+  = AllTypeGeneralize
+  + MetaVarTypeCmp
+  + MetaVarTypeGeneralize
+  + MetaVarTypePrettyPrint
+  + MExprAst
+  + MExprCmp
+  + MExprPrettyPrint
+  + MExprUnify
+  + ReprTypeUnify
+  + RepTypesAst
+  + RepTypesCmp
+  + RepTypesPrettyPrint
+  + RepTypesSolveAndReconstruct
+  + TyWildUnify
+  + VarTypeGeneralize
+end
+
+lang RepTypesLoader = MCoreLoader
+  syn Hook =
+  | RepTypesHook
+    { typeCheckLeaveMeta : Expr -> Expr
+    , reprSolve : Expr -> [Expr]
+    }
+
+  -- NOTE(vipa, 2025-02-07): The first function should be
+  -- typeCheckLeaveMeta with the appropriate set of language fragments
+  -- merged in (probably based on MExprRepAnalysis). It shouldn't be
+  -- the same as the normal type check composition, because this one
+  -- should do repr analysis instead. The second should be reprSolve,
+  -- probably based on MExprRepTypesSolverBase, partially applied to
+  -- an appropriate value of type ReprSolverOptions.
+  sem enableRepTypes : (Expr -> Expr) -> (Expr -> [Expr]) -> Loader -> Loader
+  sem enableRepTypes typeCheckLeaveMeta reprSolve = | loader ->
+    if hasHook (lam x. match x with RepTypesHook _ then true else false) loader then loader else
+
+    let hook = RepTypesHook
+      { typeCheckLeaveMeta = typeCheckLeaveMeta
+      , reprSolve = reprSolve
+      } in
+    addHook loader hook
+
+  sem _postBuildFullAst loader ast = | RepTypesHook hook ->
+    let ast = hook.typeCheckLeaveMeta ast in
+
+    match hook.reprSolve ast with [ast] ++ _ then ast
+
+    else errorSingle [infoTm ast] "Repr solving failed for the program"
+end

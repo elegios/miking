@@ -16,6 +16,7 @@ include "language-composer.mc"
 
 include "mexpr/symbolize.mc"
 include "mexpr/ast-builder.mc"
+include "mexpr/repr-ast.mc"
 
 let fst : all a. all b. (a, b) -> a = lam p.
   match p with (res, _) in res
@@ -277,6 +278,62 @@ lang InnerDeclTypeSym = DeclSym + TypeDeclAst
     (langEnv, decl)
 end
 
+lang DeclOpDeclSym = DeclSym + OpMLangDeclAst
+  sem symbolizeDecl env =
+  | DeclOp x ->
+    let symbolizeReprDecl = lam reprEnv. lam binding.
+      match mapAccumL setSymbol env.currentEnv.tyVarEnv binding.1 .vars with (tyVarEnv, vars) in
+      let newEnv = (symbolizeUpdateTyVarEnv env tyVarEnv) in
+      match setSymbol reprEnv binding.0 with (reprEnv, ident) in
+      let res =
+        { ident = ident
+        , vars = vars
+        , pat = symbolizeType newEnv binding.1 .pat
+        , repr = symbolizeType newEnv binding.1 .repr
+        }
+      in (reprEnv, res) in
+
+    match setSymbol env.currentEnv.varEnv x.ident with (varEnv, ident) in
+    let newEnv = symbolizeUpdateVarEnv env varEnv in
+    ( newEnv
+    , DeclOp
+      { x with ident = ident
+      , tyAnnot = symbolizeType env x.tyAnnot
+      }
+    )
+end
+
+lang DeclReprDeclSym = DeclSym + ReprMLangDeclAst
+  sem symbolizeDecl env =
+  | DeclRepr x ->
+    match setSymbol env.currentEnv.reprEnv x.ident with (reprEnv, ident) in
+    match mapAccumL setSymbol env.currentEnv.tyVarEnv x.vars with (tyVarEnv, vars) in
+    let rhsEnv = (symbolizeUpdateTyVarEnv env tyVarEnv) in
+    let pat = symbolizeType rhsEnv x.pat in
+    let repr = symbolizeType rhsEnv x.repr in
+    ( symbolizeUpdateReprEnv env reprEnv
+    , DeclRepr {x with ident = ident, pat = pat, repr = repr, vars = vars}
+    )
+end
+
+lang DeclOpImplSym = DeclSym + OpImplDeclAst + LetSym
+  sem symbolizeDecl env =
+  | DeclOpImpl x ->
+    let ident = getSymbol
+      { kind = "variable"
+      , info = [x.info]
+      , allowFree = env.allowFree
+      }
+      env.currentEnv.varEnv
+      x.ident in
+    match symbolizeTyAnnot env x.specType with (tyVarEnv, specType) in
+    let body = symbolizeExpr (symbolizeUpdateTyVarEnv env tyVarEnv) x.body in
+    ( env
+    , DeclOpImpl {x with ident = ident, body = body, specType = specType}
+    )
+end
+
+
 lang DeclMLangLangSym = DeclSym + LangDeclAst + TypeDeclAst + SemDeclAst +
                         SynDeclAst + LetSym +
                         DeclSynSym +
@@ -344,6 +401,12 @@ lang MLangProgramSym = MLangTopLevel + DeclSym
       decls = decls,
       expr = expr
     })
+end
+
+lang RepTypesDeclSym
+  = DeclReprDeclSym
+  + DeclOpImplSym
+  + DeclOpDeclSym
 end
 
 lang MLangSymWihoutLang = MLangAst + MExprSym +

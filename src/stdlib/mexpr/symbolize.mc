@@ -426,7 +426,7 @@ lang OpDeclSym = OpDeclAst + Sym + OpImplAst + ReprDeclAst + OpImplSym
       }
 end
 
-lang ReprTypeSym = Sym + ReprDeclAst
+lang ReprDeclSym = Sym + ReprDeclAst
   sem symbolizeExpr env =
   | TmReprDecl x ->
     match setSymbol env.currentEnv.reprEnv x.ident with (reprEnv, ident) in
@@ -653,7 +653,7 @@ lang MExprSym =
   NamedPatSym + SeqEdgePatSym + DataPatSym + NotPatSym
 end
 
-lang RepTypesSym = OpDeclSym + OpImplSym + OpVarSym + ReprSubstSym + ReprTypeSym
+lang RepTypesSym = OpDeclSym + OpImplSym + OpVarSym + ReprSubstSym + ReprDeclSym
 end
 
 -----------
