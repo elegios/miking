@@ -8,6 +8,7 @@ include "eval.mc"
 include "lazy.mc"
 include "heap.mc"
 include "mexpr/annotate.mc"
+include "mexpr/resymbolize.mc"
 include "multicore/pseq.mc"
 include "sys.mc"
 include "json.mc"
@@ -768,7 +769,7 @@ let defaultReprSolverOptions : ReprSolverOptions =
   , solutionCacheFile = None ()
   }
 
-lang RepTypesSolveAndReconstruct = RepTypesShallowSolverInterface + OpImplAst + VarAst + LetAst + OpDeclAst + ReprDeclAst + ReprTypeAst + UnifyPure + AliasTypeAst + PrettyPrint + ReprSubstAst + RepTypesHelpers + UnknownTypeAst
+lang RepTypesSolveAndReconstruct = RepTypesShallowSolverInterface + OpImplAst + VarAst + LetAst + OpDeclAst + ReprDeclAst + ReprTypeAst + UnifyPure + AliasTypeAst + PrettyPrint + ReprSubstAst + RepTypesHelpers + UnknownTypeAst + Resymbolize
   -- Top interface, meant to be used outside --
   sem reprSolve : ReprSolverOptions -> Expr -> [Expr]
   sem reprSolve options = | tm ->
@@ -920,6 +921,7 @@ lang RepTypesSolveAndReconstruct = RepTypesShallowSolverInterface + OpImplAst + 
       match concretizeSolution state.global sol with (token, implId, sols) in
       match concretizeAlt {state with remainingSolutions = sols} token
         with (newState, body) in
+      let body = resymbolizeBindings body in
       let state =
         { newState with remainingSolutions = state.remainingSolutions
         , requests = mapInsertWith concat
