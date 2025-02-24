@@ -29,7 +29,7 @@ lang MExprRepTypesSolverBase
   + VarTypeGeneralize
 end
 
-lang RepTypesLoader = MCoreLoader
+lang RepTypesLoader = MCoreLoader + OpMLangDeclAst + OpImplDeclAst + ReprMLangDeclAst
   syn Hook =
   | RepTypesHook
     { typeCheckLeaveMeta : Expr -> Expr
@@ -59,4 +59,16 @@ lang RepTypesLoader = MCoreLoader
     match hook.reprSolve ast with [ast] ++ _ then ast
 
     else errorSingle [infoTm ast] "Repr solving failed for the program"
+
+  sem _addDefinition env =
+  | DeclOp t ->
+    let varEnv = mapInsert (nameGetStr t.ident) t.ident env.currentEnv.varEnv in
+    symbolizeUpdateVarEnv env varEnv
+  | DeclOpImpl _ ->
+    -- NOTE(vipa, 2025-02-24): An OpImpl doesn't bind anything new, it
+    -- just refers to a previously defined Op
+    env
+  | DeclRepr t ->
+    let reprEnv = mapInsert (nameGetStr t.ident) t.ident env.currentEnv.reprEnv in
+    symbolizeUpdateReprEnv env reprEnv
 end

@@ -403,18 +403,6 @@ end
 lang OpDeclSym = OpDeclAst + Sym + OpImplAst + ReprDeclAst + OpImplSym
   sem symbolizeExpr env =
   | TmOpDecl x ->
-    let symbolizeReprDecl = lam reprEnv. lam binding.
-      match mapAccumL setSymbol env.currentEnv.tyVarEnv binding.1 .vars with (tyVarEnv, vars) in
-      let newEnv = (symbolizeUpdateTyVarEnv env tyVarEnv) in
-      match setSymbol reprEnv binding.0 with (reprEnv, ident) in
-      let res =
-        { ident = ident
-        , vars = vars
-        , pat = symbolizeType newEnv binding.1 .pat
-        , repr = symbolizeType newEnv binding.1 .repr
-        }
-      in (reprEnv, res) in
-
     match setSymbol env.currentEnv.varEnv x.ident with (varEnv, ident) in
     let newEnv = symbolizeUpdateVarEnv env varEnv in
     let inexpr = symbolizeExpr newEnv x.inexpr in
