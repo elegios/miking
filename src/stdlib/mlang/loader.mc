@@ -67,6 +67,7 @@ lang MCoreLoader
   sem addHook : Loader -> Hook -> Loader
   sem remHook : (Hook -> Bool) -> Loader -> Loader
   sem hasHook : (Hook -> Bool) -> Loader -> Bool
+  sem getHookOpt : all a. (Hook -> Option a) -> Loader -> Option a
   sem withHookState : all a. (Loader -> Hook -> Option (Loader, a)) -> Loader -> (Loader, a)
   -- Include a file (second String) relative to a directory (first
   -- String). Returns a symbolization enviroment containing only
@@ -175,6 +176,8 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
     Loader {x with hooks = filter (lam x. not (check x)) x.hooks}
   sem hasHook check = | Loader x ->
     optionIsSome (find check x.hooks)
+  sem getHookOpt check = | Loader x ->
+    findMap check x.hooks
   sem withHookState f = | loader & Loader x ->
     match findMap (f loader) x.hooks with Some res
     then res
