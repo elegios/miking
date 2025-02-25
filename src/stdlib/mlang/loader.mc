@@ -105,6 +105,8 @@ lang MCoreLoader
   sem _addSymbolizedDeclExn : Loader -> Decl -> Loader
   sem _addTypecheckedDecl : Loader -> Decl -> Loader
 
+  sem _queueAddDecl : Loader -> Decl -> Loader
+
   -- Symbolization related functions
   sem _getSymEnv : Loader -> SymEnv
   sem _setSymEnv : SymEnv -> Loader -> Loader
@@ -151,6 +153,7 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
     , symEnv : SymEnv
     , tcEnv : TCEnv
     , hooks : [Hook]
+    , queue : [Decl]
     }
   syn Loader =
   | Loader LoaderRec
@@ -163,6 +166,7 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
     , symEnv = symEnv
     , tcEnv = tcEnv
     , hooks = hooks
+    , queue = []
     }
   sem addHook loader = | hook ->
     match loader with Loader x in
@@ -255,6 +259,18 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
     match loader with Loader {hooks = hooks} in
     foldl (lam acc. lam cb. f acc.0 acc.1 cb) (loader, decl) hooks
 
+  sem _queueAddDecl loader = | decl ->
+    match loader with Loader x in
+    Loader {x with queue = snoc x.queue decl}
+
+  sem _drainQueueExn : Loader -> Loader
+  sem _drainQueueExn = | loader & Loader x ->
+    match x.queue with [d] ++ queue
+    -- NOTE(vipa, 2025-02-25): _addDeclExn will recursively call
+    -- _drainQueueExn, so it's enough to drain one element here
+    then _addDeclExn (Loader {x with queue = queue}) d
+    else loader
+
   sem _addDeclWithEnvExn symEnv loader = | decl ->
     match _doHook _preSymbolize loader decl with (Loader x, decl) in
     match symbolizeDecl symEnv decl with (newEnv, decl) in
@@ -269,7 +285,10 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
       then mapUpdate filename (optionMap (lam env. _addDefinition env decl)) x.includedFiles
       else x.includedFiles in
 
-    (newEnv, Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles})
+    let loader = Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles} in
+    let loader = _drainQueueExn loader in
+
+    (newEnv, loader)
 
   sem _addDeclExn loader = | decl ->
     match _doHook _preSymbolize loader decl with (Loader x, decl) in
@@ -284,7 +303,10 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
       then mapUpdate filename (optionMap (lam env. _addDefinition env decl)) x.includedFiles
       else x.includedFiles in
 
-    Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles}
+    let loader = Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles} in
+    let loader = _drainQueueExn loader in
+
+    loader
 
   sem _addSymbolizedDeclExn loader = | decl ->
     match _doHook _preTypecheck loader decl with (Loader x, decl) in
@@ -295,7 +317,10 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
       then mapUpdate filename (optionMap (lam env. _addDefinition env decl)) x.includedFiles
       else x.includedFiles in
 
-    Loader {x with decls = snoc x.decls decl}
+    let loader = Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles} in
+    let loader = _drainQueueExn loader in
+
+    loader
 
   sem _addTypecheckedDecl loader = | decl ->
     match loader with Loader x in
@@ -304,7 +329,10 @@ lang BootParserLoader = MCorePathResolution + DeclAst + ExprAsDecl + BootParser
       then mapUpdate filename (optionMap (lam env. _addDefinition env decl)) x.includedFiles
       else x.includedFiles in
 
-    Loader {x with decls = snoc x.decls decl}
+    let loader = Loader {x with decls = snoc x.decls decl, includedFiles = includedFiles} in
+    let loader = _drainQueueExn loader in
+
+    loader
 
   sem _addDefinition : SymEnv -> Decl -> SymEnv
   sem _addDefinition env =
