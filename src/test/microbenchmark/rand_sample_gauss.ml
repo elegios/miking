@@ -1,10 +1,3 @@
-let rand_float_gauss_boxmuller_many count =
-  let rec helpiter i acc =
-    if i == count then acc
-    else helpiter (i + 1) (Owl_stats.gaussian_rvs 0.0 1.0 :: acc)
-  in
-  helpiter 0 []
-
 (* Generates a uniformly random floating point number in the range [0,1) *)
 let randFloatUniform _ =
   let upperbound = 1073741823 in

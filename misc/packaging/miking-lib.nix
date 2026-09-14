@@ -20,9 +20,15 @@ stdenv.mkDerivation (finalAttrs: {
 
   makeFlags = [ "prefix=$(out)" "ocamllibdir=$(out)/lib/ocaml/${ocaml.version}/site-lib" ];
 
-  buildFlags = [ "boot" ];
+  # NOTE: `mi-stats` belongs to this derivation rather than to
+  # miking-unwrapped, because this is the one that sets `ocamllibdir` into
+  # its own output -- and miking.nix puts exactly that site-lib on the
+  # wrapped `mi`'s OCAMLPATH, which is how a compiled program finds the
+  # package.  Note that the Makefile's umbrella `install` target is not used
+  # here, so folding `install-mi-stats` into it is not enough on its own.
+  buildFlags = [ "boot" "mi-stats" ];
 
-  installTargets = "install-boot install-stdlib";
+  installTargets = "install-boot install-stdlib install-mi-stats";
 
   preConfigure = ''
     for f in $(find misc -type f -a -executable); do patchShebangs --build $f; done

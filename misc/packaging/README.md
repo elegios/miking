@@ -15,6 +15,7 @@ To produce a shell with Miking itself, use the following command.
     $ nix-shell -A miking-shell
 
 To support native compilation, ocaml, findlib, dune and a C compiler must also be added to the environment.
+A C++ compiler is required as well, since `mi-stats` -- the numerics support library that `dist-ext.mc`, `math-ext.mc` and `matrix-ext.mc` link against -- is built from the vendored C++ sources in `lib/`.
 
 ## Guix package definition
 
@@ -28,13 +29,14 @@ To produce a shell with Miking itself, use the following command.
 
     $ guix shell -L . -f miking.scm
 
-To support native compilation, ocaml, findlib, dune and a C compiler must also be added to the environment.
+To support native compilation, ocaml, findlib, dune and a C++ compiler (`gcc-toolchain`) must also be added to the environment; see the note above about `mi-stats`.
 
 ## Self-contained tarball scripts
 
 The scripts `miking-pack-linux` and `miking-pack-darwin` use the Nix package definition to produce a completely self-contained tarball with Miking and its dependencies for binary distribution.
 The former works for x86-64 Linux and WSL, and the latter works for x86-64 and arm64 macOS.
 The scripts requires Nix to be installed on the build system, and can be run as follows.
+They resolve their dependencies against `default.nix` in this directory and against `<nixpkgs>`, so `NIX_PATH` must name a nixpkgs checkout.
 
     $ /path/to/miking-pack-linux  # or $ /path/to/miking-pack-darwin
 
@@ -66,7 +68,11 @@ The `miking-pack.XXXXXX` folder can be renamed and moved around freely as long a
 
 `mi-setup` is a POSIX shell script which depends on the commands `realpath`, `dirname` and `find` usually available on any Unix system (included in coreutils and findutils respectively).
 
-The tarball includes everything needed for `test-compile` to pass, including a C compiler, OCaml, `owl` and C library dependencies.
+The tarball includes everything needed for `test-compile` to pass: a C and C++ compiler, OCaml, the `mi-stats` numerics package and C library dependencies.
+
+`mi-stats` is the support library for `dist-ext.mc`, `math-ext.mc` and `matrix-ext.mc`.
+It is built from the vendored sources in `lib/` as part of Miking's own build, so it travels in the bundle as an ordinary part of the `miking` closure rather than as a separate dependency to list.
+It links against `libstdc++`, which is already bundled because `gcc.cc` (or `clang.cc` on macOS) is one of the top-level dependencies.
 
 ### Implementation
 

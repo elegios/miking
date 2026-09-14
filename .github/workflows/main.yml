@@ -26,11 +26,11 @@ jobs:
 
       - name: Install opam packages
         run: |
-          # Install dependencies of owl
-          sudo apt-get install -y liblapacke-dev libopenblas-dev
-
-          # Install all opam packages used in make test
-          opam install -y dune linenoise pyml toml lwt owl ocamlformat.0.29.0
+          # Install all opam packages used in make test.  The numerics
+          # support library lib/mi-stats is built from vendored sources by
+          # the repository's own dune project and needs only a C++ compiler,
+          # which the runner image already provides.
+          opam install -y dune linenoise pyml toml lwt ocamlformat.0.29.0
 
       - name: Build Miking
         timeout-minutes: 10
@@ -63,15 +63,11 @@ jobs:
 
       - name: Install opam packages
         run: |
-          # Install dependencies of owl
-          brew install pkg-config autoconf openblas libomp fftw
-
-          # Export environment variable needed by openblas
-          export OWL_LDFLAGS="-L/opt/homebrew/opt/libomp/lib -lomp"
-          export OWL_CPPFLAGS="-Xpreprocessor -fopenmp"
-
-          # Install all opam packages used in make test
-          opam install -y dune linenoise pyml toml lwt menhir owl ocamlformat.0.29.0
+          # Install all opam packages used in make test.  See the Linux job:
+          # lib/mi-stats needs only a C++ compiler, here Apple Clang, which
+          # doubles as our check that the vendored sources build on a second
+          # compiler as well as a second platform.
+          opam install -y dune linenoise pyml toml lwt menhir ocamlformat.0.29.0
 
       - name: Build Miking
         timeout-minutes: 30

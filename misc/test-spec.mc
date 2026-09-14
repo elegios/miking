@@ -76,8 +76,15 @@ testMain substituters directories location (lam api.
 
   let origin = api.file (lam x. x) in
 
-  let owl = api.dependency (lam.
-    if eqi 0 (command "ocamlfind query owl >/dev/null 2>&1")
+  -- NOTE: `mi-stats` is built from the vendored sources in `lib/` and
+  -- installed by `make install-mi-stats`, so unlike the other dependencies
+  -- here it is not something the user has to obtain separately.  It is still
+  -- gated: `externalGetSupportedExternalImpls` drops externals whose
+  -- `libraries` are unavailable *silently*, so without this check a partial
+  -- install would surface as unexplained "unknown external" failures rather
+  -- than as skipped tests.
+  let miStats = api.dependency (lam.
+    if eqi 0 (command "ocamlfind query mi-stats >/dev/null 2>&1")
     then DepAvailable ()
     else DepUnavailable ()) in
   let sundials = api.dependency (lam.
@@ -241,9 +248,10 @@ testMain substituters directories location (lam api.
   -- since we're just testing, not benchmarking
   -- NOTE(vipa, 2024-11-13): We skip interpretation, since many of
   -- those end up quite slow
-  -- TODO(vipa, 2026-04-08): I'm not sure that *all* of these require
-  -- owl, so we might be able to be a bit more specific
-  api.tests [owl]
+  -- NOTE: `matrix_mul.mc` needs mat-ext, hence mi-stats. The others do not,
+  -- so this could be narrowed; it is left as one group because that is how
+  -- it was gated on owl before.
+  api.tests [miStats]
     (and (strStartsWith "src/test/microbenchmark/") (strEndsWith ".mc"))
     [(eval, dont), (run, dont), (runBench, succ)];
 
@@ -438,9 +446,9 @@ testMain substituters directories location (lam api.
     (eqString "src/test/examples/async/tick.mc")
     [(eval, dont), (compile, succ), (run, dont)];
 
-  -- === Owl ===
+  -- === mi-stats ===
 
-  api.tests [owl]
+  api.tests [miStats]
     (elem
       [ "src/stdlib/ext/math-ext.mc"
       , "src/stdlib/ext/matrix-ext.mc"

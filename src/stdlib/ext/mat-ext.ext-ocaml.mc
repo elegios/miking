@@ -1,62 +1,42 @@
 include "map.mc"
 include "ocaml/ast.mc"
 
+-- Backed by lib/mi-stats. owl's in-place `~out:` forms are replaced by
+-- Eigen::Map writes into the caller's buffer, so nothing is copied and no
+-- Bigarray reshaping dance is needed -- the (m, n) pair is passed through and
+-- used directly, where the owl bindings had to build a reshaped genarray view
+-- around every call.
+--
+-- Generic over the element kind: ExtArr Float may be float32- or
+-- float64-backed and mat-ext.mc's utests exercise both.
+
 let impl = lam arg : { expr : String, ty : use Ast in Type }.
-  { expr = arg.expr, ty = arg.ty, libraries = ["owl"], cLibraries = [] }
+  { expr = arg.expr, ty = arg.ty, libraries = ["mi-stats"], cLibraries = [] }
 
-let owlDenseMatrixGenericInplaceUnop = lam name. lam shape1. lam shape2.
-  join [
-    "(fun m n a b -> Owl_dense_matrix.Generic.",
-    name,
-    " ~out:(Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 b) ",
-    shape2,
-    ")) (Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 a) ",
-    shape1,
-    ")))"]
-
-let owlDenseMatrixGenericInplaceUnopTy = tyarrows_ [
-  tyint_, tyint_, otyopaque_, otyopaque_, otyunit_]
-
-let owlDenseMatrixGenericInplaceBinop = lam name.
-  join [
-    "(fun m n a b c -> Owl_dense_matrix.Generic.",
-    name,
-    " ~out:(Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 c) m n)) (Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 a) m n)) (Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 b) m n)))"]
-
-let owlDenseMatrixGenericInplaceBinopTy = tyarrows_ [
-  tyint_, tyint_, otyopaque_, otyopaque_, otyopaque_, otyunit_]
+let inplaceUnopTy = use OCamlTypeAst in
+  tyarrows_ [tyint_, tyint_, otyopaque_, otyopaque_, otyunit_]
 
 let matExtMap =
   use OCamlTypeAst in
   mapFromSeq cmpString [
     ("externalMatTranspose", [
-      impl {
-        expr = owlDenseMatrixGenericInplaceUnop "transpose_" "m n" "n m",
-        ty = owlDenseMatrixGenericInplaceUnopTy
-      }
+      impl { expr = "Mi_stats.mat_transpose", ty = inplaceUnopTy }
     ]),
     ("externalMatElemExp", [
-      impl {
-        expr = owlDenseMatrixGenericInplaceUnop "exp_" "m n" "m n",
-        ty = owlDenseMatrixGenericInplaceUnopTy
-      }
+      impl { expr = "Mi_stats.mat_elem_exp", ty = inplaceUnopTy }
     ]),
     ("externalMatElemLog", [
-      impl {
-        expr = owlDenseMatrixGenericInplaceUnop "log_" "m n" "m n",
-        ty = owlDenseMatrixGenericInplaceUnopTy
-      }
+      impl { expr = "Mi_stats.mat_elem_log", ty = inplaceUnopTy }
     ]),
     ("externalMatElemMul", [
-      impl {
-        expr = owlDenseMatrixGenericInplaceBinop "mul_",
-        ty = owlDenseMatrixGenericInplaceBinopTy
-      }
+      impl { expr = "Mi_stats.mat_elem_mul",
+             ty = tyarrows_ [
+               tyint_, tyint_, otyopaque_, otyopaque_, otyopaque_, otyunit_] }
     ]),
+    -- Stan's matrix_exp (scaling-and-squaring Pade), always evaluated in
+    -- double and written back in the input's kind.
     ("externalMatExp", [
-      impl {
-        expr = "(fun m n a -> Bigarray.reshape_1 (Owl_linalg_generic.expm (Bigarray.genarray_of_array2 (Bigarray.reshape_2 (Bigarray.genarray_of_array1 a) m n))) (m * n))",
-        ty = tyarrows_ [tyint_,  tyint_, otyopaque_, otyopaque_]
-      }
+      impl { expr = "Mi_stats.mat_exp",
+             ty = tyarrows_ [tyint_, tyint_, otyopaque_, otyopaque_] }
     ])
   ]

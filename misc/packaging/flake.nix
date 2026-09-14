@@ -20,7 +20,7 @@
           devShells.default = pkgs.mkShell {
             name = "Miking dev shell";
             inputsFrom = [ packages.miking-lib packages.miking-unwrapped ];
-            buildInputs = with pkgs; [ tup ocamlformat_0_29_0 ocamlPackages.owl ocamlPackages.utop gdb ];
+            buildInputs = with pkgs; [ tup ocamlformat_0_29_0 ocamlPackages.utop gdb ];
           };
         };
     in

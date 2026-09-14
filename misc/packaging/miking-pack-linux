@@ -15,7 +15,7 @@ export packdir="$(mktemp -d /tmp/miking-pack.XXXXXX)"
 
 top_deps=('binutils-unwrapped' 'gcc.cc' 'miking')
 
-ocaml_deps=('ocaml' 'findlib' 'dune_3' 'owl' 'lwt' 'toml')
+ocaml_deps=('ocaml' 'findlib' 'dune_3' 'lwt' 'toml')
 
 static_deps=('patchelf' 'gnugrep' 'file')
 

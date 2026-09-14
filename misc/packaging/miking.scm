@@ -8,10 +8,6 @@
   #:use-module (guix utils)
   #:use-module ((guix licenses) #:prefix license:)
   #:use-module (gnu packages base)
-  #:use-module (gnu packages compression)
-  #:use-module (gnu packages maths)
-  #:use-module (gnu packages python)
-  #:use-module (gnu packages python-xyz)
   #:use-module (gnu packages ocaml))
 
 (define-public ocaml-ISO8601
@@ -62,30 +58,6 @@
 provided.")
     (license license:isc)))
 
-(define-public ocaml-npy
-  (package
-    (name "ocaml-npy")
-    (version "0.0.9")
-    (source (origin
-              (method git-fetch)
-              (uri (git-reference
-                    (url "https://github.com/LaurentMazare/npy-ocaml")
-                    (commit version)))
-              (file-name (git-file-name name version))
-              (sha256
-               (base32
-                "1fryglkm20h6kdqjl55b7065b34bdg3g3p6j0jv33zvd1m5888m1"))))
-    (build-system dune-build-system)
-    (native-inputs (list zlib python-wrapper python-numpy))
-    (propagated-inputs (list camlzip))
-    (home-page "https://github.com/LaurentMazare/npy-ocaml")
-    (synopsis "Numpy npy file format reading/writing for OCaml")
-    (description
-     "A library providing simple read/write function using the numpy npy/npz
-file formats.  These can be used to save a bigarray to disk and then load it
-from python using numpy.")
-    (license license:asl2.0)))
-
 (define-public ocaml-toml
   (package
     (name "ocaml-toml")
@@ -110,34 +82,6 @@ from python using numpy.")
 TOML, a minimal configuration file format.  Helpful getters to retrieve data as
 OCaml primitive types are also supplied.")
     (license license:lgpl3)))
-
-(define-public ocaml-owl
-  (package
-    (name "ocaml-owl")
-    (version "1.1")
-    (source (origin
-              (method git-fetch)
-              (uri (git-reference
-                    (url "https://github.com/owlbarn/owl")
-                    (commit version)))
-              (file-name (git-file-name name version))
-              (sha256
-               (base32
-                "08jvgf1fd7d28cxxjifx4ikmwcbfbiyw0sivw3xy4vdzvbyc9xw9"))))
-    (build-system dune-build-system)
-    (propagated-inputs (list openblas zlib ocaml-ctypes ocaml-npy ocaml-compiler-libs))
-    (native-inputs (list ocaml-alcotest ocaml-base ocaml-stdio))
-    (home-page "https://github.com/owlbarn/owl")
-    (synopsis "OCaml Scientific and Engineering Computing")
-    (description
-     "Owl is an OCaml numerical library.  It supports N-dimensional
-arrays, both dense and sparse matrix operations, linear algebra,
-regressions, fast Fourier transforms, and many advanced mathematical
-and statistical functions (such as Markov chain Monte Carlo methods).
-Recently, Owl has implemented algorithmic differentiation which
-simplifies developing machine learning and neural network
-algorithms.")
-    (license license:expat)))
 
 (define-syntax-rule (and/fn functions ...)
   (lambda args (and (apply functions args) ...)))
@@ -171,10 +115,20 @@ algorithms.")
                (replace 'install (assoc-ref gnu:%standard-phases 'install))
                (add-after 'install 'wrap
                  (lambda* (#:key inputs outputs #:allow-other-keys)
+                   ;; NOTE: `mi-stats` is installed by `make install` into this
+                   ;; package's own `lib/ocaml/site-lib` (the Makefile derives
+                   ;; `ocamllibdir` from `prefix`, set above).  It has to be on
+                   ;; OCAMLPATH as well as installed, or `mi compile` of a
+                   ;; program using `dist-ext.mc`, `math-ext.mc` or
+                   ;; `matrix-ext.mc` fails to find the package.  owl was a
+                   ;; native-input and so was never on this list either, which
+                   ;; means that path could not have worked before.
                    (wrap-program (string-append (assoc-ref outputs "out") "/bin/mi")
                      `("PATH" suffix (,(dirname (search-input-file inputs "bin/mkdir"))))
-                     `("OCAMLPATH" suffix (,(string-append (assoc-ref inputs "ocaml-linenoise")
-                                                           "/lib/ocaml/site-lib")))))))))
+                     `("OCAMLPATH" suffix
+                       (,(string-append (assoc-ref outputs "out") "/lib/ocaml/site-lib")
+                        ,(string-append (assoc-ref inputs "ocaml-linenoise")
+                                        "/lib/ocaml/site-lib")))))))))
     (inputs
      (list
       ocaml-linenoise
@@ -183,8 +137,12 @@ algorithms.")
     (native-inputs
      (list
       ocaml-lwt         ;; For async-ext.mc
-      ocaml-owl         ;; For dist-ext.mc
       ocaml-toml        ;; For toml-ext.mc
+      ;; NOTE: there is no package to add for the numerics any more.  What
+      ;; owl used to provide is now built from the vendored sources in
+      ;; `lib/` by the repository's own dune project, as part of the default
+      ;; `make` target, and installed by `make install` -- so it needs only a
+      ;; C++ compiler, which the build environment already has.
       ))
     (synopsis "Meta language system for creating embedded DSLs.")
     (description "Miking (Meta vIKING) is a meta language system for creating

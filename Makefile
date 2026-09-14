@@ -66,10 +66,47 @@ fix:
 	misc/scripts/with-tmp-dir dune fmt --root=src/boot/ --build-dir="{}"
 
 
+# The vendored numerics support library (`mi-stats`)
+#
+# Built and installed the same way as `boot`: into build/ so the bootstrap
+# below can find it on OCAMLPATH, and into the opam libdir so that programs
+# compiled by `mi` can link it. The C++ in lib/mi-stats is compiled once
+# here -- never per generated program.
+
+# NOTE: This is a real file target with real prerequisites, rather than the
+# `$(if $(wildcard ...))` guard used for `boot` below.  It has to be: the
+# guard only asks whether a build exists, not whether it is current, and a
+# stale support library does not fail cleanly -- an older float64-only build
+# reads a float32 Bigarray as doubles and corrupts the heap.  The vendored
+# trees are represented by VENDORED.txt, which vendor.sh rewrites.
+MI_STATS_DEPS := $(wildcard lib/mi-stats/*.ml lib/mi-stats/*.cpp lib/mi-stats/*.hpp) \
+                 lib/mi-stats/dune lib/dune lib/dune-project lib/VENDORED.txt
+
+.PHONY: mi-stats
+mi-stats: build/lib/mi-stats/META
+
+build/lib/mi-stats/META: $(MI_STATS_DEPS)
+	misc/scripts/with-tmp-dir dune build --root=lib/ --build-dir="{}" \
+	"&&" dune install --root=lib/ --build-dir="{}" --prefix=$(current_dir)/build ">/dev/null" "2>&1"
+
+.PHONY: install-mi-stats
+install-mi-stats:
+	misc/scripts/with-tmp-dir dune build --root=lib/ --build-dir="{}" \
+	"&&" dune install --root=lib/ --build-dir="{}" --prefix=$(prefix) --libdir=$(ocamllibdir) ">/dev/null 2>&1"
+
+.PHONY: uninstall-mi-stats
+uninstall-mi-stats:
+	misc/scripts/with-tmp-dir dune uninstall --root=lib/ --build-dir="{}" --prefix=$(prefix) --libdir=$(ocamllibdir) ">/dev/null 2>&1"
+
+.PHONY: test-mi-stats
+test-mi-stats:
+	misc/scripts/with-tmp-dir dune test --root=lib/ --build-dir="{}"
+
+
 # Bootstrapping the `mi` executable
 
 .PHONY: bootstrap
-bootstrap: $(if $(wildcard build/$(BOOT_NAME)),,boot)
+bootstrap: $(if $(wildcard build/$(BOOT_NAME)),,boot) build/lib/mi-stats/META
 	$(SET_STDLIB) $(SET_OCAMLPATH) build/$(BOOT_NAME) eval src/main/mi-lite.mc -- 0 src/main/mi-lite.mc build/$(MI_LITE_NAME)
 	$(SET_STDLIB) $(SET_OCAMLPATH) build/$(MI_LITE_NAME) 1 src/main/mi.mc build/$(MI_MID_NAME)
 	$(SET_STDLIB) $(SET_OCAMLPATH) build/$(MI_MID_NAME) compile src/main/mi.mc --output build/$(MI_NAME)
@@ -85,10 +122,10 @@ build/$(MI_CHEAT_NAME): $(if $(wildcard build/$(MI_CHEAT_NAME)),,cheat)
 # Umbrella install/uninstall targets, for installing and uninstalling everything
 
 .PHONY: install
-install: $(if $(wildcard build/$(MI_NAME)),,bootstrap) install-boot install-stdlib install-mi
+install: $(if $(wildcard build/$(MI_NAME)),,bootstrap) install-boot install-mi-stats install-stdlib install-mi
 
 .PHONY: uninstall
-uninstall: uninstall-boot uninstall-stdlib uninstall-mi
+uninstall: uninstall-boot uninstall-mi-stats uninstall-stdlib uninstall-mi
 
 # Installing and uninstalling `mi` and the standard library
 
@@ -117,7 +154,12 @@ misc/test: misc/test-spec.mc build/$(MI_NAME)
 	$(SET_STDLIB) $(SET_OCAMLPATH) build/$(MI_NAME) compile misc/test-spec.mc --output misc/test
 
 .PHONY: test test-all test-quick
-test test-all test-quick: lint misc/test build/mi
+# NOTE: `test-mi-stats` runs lib/mi-stats' own golden-value tests, which
+# check the vendored numerics against the values owl produced.  They are not
+# MExpr tests so `misc/test` cannot see them, and they are the only thing
+# guarding the parameterisation conversions (owl uses gamma *scale*, Stan
+# uses gamma *rate*), so they belong in the default test run.
+test test-all test-quick: lint test-mi-stats misc/test build/mi
 test:
 	+ exec misc/test $(j_flag) --boot --smart-dep
 

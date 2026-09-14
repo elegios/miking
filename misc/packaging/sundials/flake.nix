@@ -54,7 +54,10 @@
             pkgs.gdb
 
             lwt # For async-ext.mc
-            owl # For dist-ext.mc
+            # dist-ext.mc, math-ext.mc, cblas-ext.mc, mat-ext.mc and
+            # matrix-ext.mc are served by the in-tree `mi-stats` package,
+            # built from the vendored sources in `lib/`.  It needs only a
+            # C++ compiler, which mkShell's stdenv already provides.
             toml # For toml-ext.mc
             self.legacyPackages.${system}.${sundialsml} # for sundials-ext.mc
           ];

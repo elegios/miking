@@ -2,11 +2,14 @@
 
   MCore High-level CBLAS interface
 
-  The interface mostly mirrors:
-    https://ocaml.xyz/owl/owl/Owl_cblas_basic/index.html.
+  The interface mirrors the CBLAS C API, including its `layout` parameter,
+  and is implemented in lib/mi-stats (mi_stats_blas.cpp) rather than by
+  linking a BLAS: the level-1 routines are strided loops and the level-2/3
+  ones go through Eigen. It previously mirrored owl's Owl_cblas_basic, which
+  is why the argument order is CBLAS's rather than Eigen's.
 
   For CBLAS documentation see:
-    https://software.intel.com/en-us/mkl-developer-reference-c
+    https://www.netlib.org/blas/cblas.h
 
 -/
 

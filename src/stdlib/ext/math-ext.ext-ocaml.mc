@@ -31,17 +31,20 @@ let mathExtMap =
     ("externalSqrt", [
       impl { expr = "Float.sqrt", ty = tyarrow_ tyfloat_ tyfloat_ }
     ]),
+    -- The only two values in this file that are not plain Float functions.
+    -- Backed by lib/mi-stats (Stan Math's lgamma and
+    -- binomial_coefficient_log); everything above routes to OCaml's Float.
     ("externalLogGamma", [
-      { expr = "Owl_maths.loggamma ",
+      { expr = "Mi_stats.log_gamma",
         ty = tyarrows_ [tyfloat_, tyfloat_],
-        libraries = ["owl"],
+        libraries = ["mi-stats"],
         cLibraries = []
       }
     ]),
     ("externalLogCombination", [
-      { expr = "Owl_maths.log_combination ",
+      { expr = "Mi_stats.log_combination",
         ty = tyarrows_ [tyint_, tyint_, tyfloat_],
-        libraries = ["owl"],
+        libraries = ["mi-stats"],
         cLibraries = []
       }
     ])

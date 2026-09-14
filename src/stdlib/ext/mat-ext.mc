@@ -474,7 +474,9 @@ utest
 external externalMatExp : Int -> Int -> ExtArr Float -> ExtArr Float
 
 -- Computes the matrix exponential. Returns a fresh matrix.
--- .see https://ocaml.xyz/owl/owl/Owl_linalg/Generic/index.html#val-expm
+-- Computed by stan::math::matrix_exp (scaling and squaring with a Pade
+-- approximant), always in double precision even for a float32 matrix.
+-- .see https://mc-stan.org/docs/functions-reference/matrix_operations.html
 let matExp : Mat Float -> Either MatError (Mat Float) =
   lam a.
     if matIsSquare a then Right { a with arr = externalMatExp a.m a.n a.arr }

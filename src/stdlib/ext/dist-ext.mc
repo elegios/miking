@@ -194,7 +194,6 @@ let geometricPmf : Float -> Int -> Float = lam p. lam x.
   exp (geometricLogPmf p x)
 
 -- Lomax
-external externalLomaxLogPdf : Float -> Float -> Float -> Float
 external externalLomaxSample ! : Float -> Float -> Float
 let lomaxSample = lam shape: Float. lam scale: Float.
   externalLomaxSample shape scale
@@ -257,13 +256,36 @@ let treeInferenceCategoricalSample = lam p. lam pairSets.
   pair
 
 -- Seed
+--
+-- There are two independent generators behind this library, and setSeed must
+-- reseed both:
+--
+--   1. OCaml's `Random`, reached through the boot intrinsics `randSetSeed`
+--      and `randIntU`.
+--   2. The single generator inside lib/mi-stats, which every distribution
+--      sampler above draws from. owl instead had four -- Random,
+--      Owl_base_stats_prng, SFMT and the ziggurat tables -- and a caller
+--      could not tell which one a given distribution used.
+--
+-- Unseeded behaviour is deliberate, not incidental. `randIntU` self-initialises
+-- OCaml's Random on its first call unless `randSetSeed` ran first, and
+-- mi-stats seeds its generator nondeterministically on first use. Together
+-- that keeps a program with no seed varying from run to run, which is what
+-- CorePPL relies on: coreppl-to-mexpr/runtime-common.mc calls setSeed only
+-- when PPL_SEED or --seed is given, and `cppl --help` promises the seed is
+-- "Initialized randomly if option is omitted". Under owl this fell out of
+-- owl_stats.ml running `Owl_stats_prng.self_init ()` at module load, i.e. as a
+-- side effect of merely linking the library; mi-stats does it explicitly.
+--
+-- Calling `randSetSeed` here is still VERY important: without it the compiled
+-- code self-initialises at the first `randIntU` and clobbers the seed just
+-- set. See https://github.com/miking-lang/miking/issues/761, which proposes
+-- removing that lazy self-initialisation from `randIntU` altogether. With owl
+-- gone, `Random` is no longer also self-initialised behind your back at load
+-- time, so either resolution in that issue is now easier to reason about.
 external externalSetSeed ! : Int -> ()
 let setSeed : Int -> () = lam seed.
-
-  -- VERY important to also call this intrinsic here. Otherwise, the compiled code
-  -- _self-initializes the seed_ at the first call to the intrinsic randIntU.
   randSetSeed seed;
-
   externalSetSeed seed
 
 mexpr
