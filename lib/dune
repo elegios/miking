@@ -1,0 +1,3 @@
+; The vendored trees are data, not dune projects: keep dune from scanning them
+; for dune files, while still allowing (source_tree ...) deps on them.
+(data_only_dirs stan-math boost eigen overlay)

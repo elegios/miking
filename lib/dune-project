@@ -1,0 +1,12 @@
+(lang dune 3.5)
+(generate_opam_files true)
+(name mi-stats)
+
+(package
+ (name mi-stats)
+ (synopsis "Miking's numerics support library")
+ (description
+  "Bindings to a pared-down, vendored Stan Math (plus the Boost and Eigen
+subsets it needs) backing Miking's probabilistic and matrix externals.
+Replaces the previous dependency on owl.")
+ (depends dune))

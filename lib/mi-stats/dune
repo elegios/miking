@@ -1,0 +1,91 @@
+; Each C++ translation unit is built by an explicit rule rather than by
+; (foreign_stubs), because the vendored headers live outside this directory
+; and dune will only materialise them in the build tree if something declares
+; a dependency on them -- which (foreign_stubs) has no way to express.
+;
+; The objects are then bundled into a foreign archive: unlike (extra_objects),
+; a (foreign_archives ...) entry is installed alongside the library and
+; recorded in META, so downstream `ocamlfind ocamlopt -package mi-stats` links
+; cleanly. Miking's generated programs reach us exactly that way -- see
+; src/stdlib/ocaml/compile.mc, which turns each `libraries` entry into
+; `-package <x>` and each `cLibraries` entry into `-cclib -l<x>`.
+
+(rule
+ (targets mi_stats_dist.o)
+ (deps
+  mi_stats_dist.cpp
+  mi_stats_common.hpp
+  mi_stats_rng.hpp
+  (source_tree ../overlay)
+  (source_tree ../stan-math)
+  (source_tree ../boost)
+  (source_tree ../eigen))
+ (action
+  (run c++ -std=c++17 -O2 -pthread -fPIC -DEIGEN_MPL2_ONLY
+       -I%{ocaml_where}
+       -I../overlay -I../stan-math -I../boost -I../eigen
+       -c mi_stats_dist.cpp -o %{targets})))
+
+(rule
+ (targets mi_stats_special.o)
+ (deps
+  mi_stats_special.cpp
+  mi_stats_common.hpp
+  mi_stats_rng.hpp
+  (source_tree ../overlay)
+  (source_tree ../stan-math)
+  (source_tree ../boost)
+  (source_tree ../eigen))
+ (action
+  (run c++ -std=c++17 -O2 -pthread -fPIC -DEIGEN_MPL2_ONLY
+       -I%{ocaml_where}
+       -I../overlay -I../stan-math -I../boost -I../eigen
+       -c mi_stats_special.cpp -o %{targets})))
+
+(rule
+ (targets mi_stats_matrix.o)
+ (deps
+  mi_stats_matrix.cpp
+  mi_stats_common.hpp
+  mi_stats_rng.hpp
+  (source_tree ../overlay)
+  (source_tree ../stan-math)
+  (source_tree ../boost)
+  (source_tree ../eigen))
+ (action
+  (run c++ -std=c++17 -O2 -pthread -fPIC -DEIGEN_MPL2_ONLY
+       -I%{ocaml_where}
+       -I../overlay -I../stan-math -I../boost -I../eigen
+       -c mi_stats_matrix.cpp -o %{targets})))
+
+(rule
+ (targets mi_stats_blas.o)
+ (deps
+  mi_stats_blas.cpp
+  mi_stats_common.hpp
+  mi_stats_rng.hpp
+  (source_tree ../overlay)
+  (source_tree ../stan-math)
+  (source_tree ../boost)
+  (source_tree ../eigen))
+ (action
+  (run c++ -std=c++17 -O2 -pthread -fPIC -DEIGEN_MPL2_ONLY
+       -I%{ocaml_where}
+       -I../overlay -I../stan-math -I../boost -I../eigen
+       -c mi_stats_blas.cpp -o %{targets})))
+
+(rule
+ (targets libmi_stats_cxx.a)
+ (deps mi_stats_dist.o mi_stats_special.o mi_stats_matrix.o mi_stats_blas.o)
+ (action
+  (run ar rcs %{targets} mi_stats_dist.o mi_stats_special.o mi_stats_matrix.o mi_stats_blas.o)))
+
+(library
+ (name mi_stats)
+ (public_name mi-stats)
+ ; Native only: Miking generates programs with `ocamlfind ocamlopt`
+ ; (src/stdlib/ocaml/compile.mc), so a bytecode build -- which would also
+ ; require a shared dllmi_stats_cxx.so -- buys nothing.
+ (modes native)
+ (foreign_archives mi_stats_cxx)
+ (c_library_flags -lstdc++ -pthread))

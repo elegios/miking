@@ -1,0 +1,10 @@
+; Golden-value tests: every entry point, checked against the values owl
+; produced for the same inputs (recorded in baseline/, and reproduced in the
+; comments beside each expectation). Also covers the error contract -- an
+; out-of-support value must come back as neg_infinity, an invalid parameter
+; must raise -- since mi_stats_common.hpp's validation, not Stan's, is what
+; decides which.
+(tests
+ (names test_dist test_matrix)
+ (modes native)
+ (libraries mi_stats))

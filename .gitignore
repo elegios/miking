@@ -1,6 +1,18 @@
 build/*
 !build/tup.config
 _*
+# The vendored numerics sources under lib/ contain headers whose names begin
+# with an underscore (boost/predef/detail/_cassert.h,
+# boost/predef/library/c/_prefix.h).  The `_*` rule above would drop them
+# silently: the tree still builds in place, and only a fresh checkout or a
+# Nix build -- which sees just the tracked files -- fails, with a confusing
+# "No such file or directory" from deep inside boost/predef.  These are
+# listed per-subtree rather than as `!lib/**/_*` so that lib/_build stays
+# ignored.
+!lib/boost/**/_*
+!lib/eigen/**/_*
+!lib/stan-math/**/_*
+!lib/overlay/**/_*
 \#*
 \.\#*
 temp/
