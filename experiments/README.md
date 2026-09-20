@@ -108,19 +108,21 @@ stay inside it so that all four backends can run the same source:
 * terms: variables, application, lambda, `let`, `recursive let`, `type`,
   `con`, constants, `match`, records, record update, sequences, `never`
 * patterns: variable, wildcard, boolean, integer, character, record (so tuples
-  too), and both sequence forms -- `PatSeqTot` and `PatSeqEdge`
+  too), constructor (`PatCon`), and-pattern, or-pattern, not-pattern
+  (`PatAnd`/`PatOr`/`PatNot`), and both sequence forms -- `PatSeqTot` and
+  `PatSeqEdge`
 * constants: `Int` and `Float` arithmetic, shifts, comparisons and conversions;
   `Bool`; `Char` with `eqc`, `int2char` and `char2int`; every sequence constant
   from `get` and `cons` through `foldl`, `foldr` and `create`; `unsafeCoerce`;
   `exit`
 
-Notably absent, and therefore absent from the benchmarks: constructor patterns,
-`print` and the rest of I/O, references, tensors, maps, and externals. That also
-means nothing from the standard library can be `include`d, since much of it
-bottoms out in unsupported primitives. Recursive data still has to be
-Church-encoded (see `church-list.mc`), because constructor patterns are not
-supported -- which is why that benchmark stays in the suite beside the sequence
-ones.
+Notably absent, and therefore absent from the benchmarks: `print` and the rest
+of I/O, references, tensors, maps, and externals. That also means nothing from
+the standard library can be `include`d, since much of it bottoms out in
+unsupported primitives. `church-list.mc` still Church-encodes its list as
+closures rather than a real `con` type -- it predates `PatCon` support and is
+kept as-is for comparison against `tree-pattern.mc`, which builds the same
+kind of recursive data with real constructors instead.
 
 ## The benchmarks
 
@@ -137,6 +139,8 @@ ones.
 | `mutual-rec-outer` | the same, but reading a variable bound outside the group | linear |
 | `closures` | closure allocation and higher-order application chains | quadratic |
 | `church-list` | recursive data built from closures, folded three times | linear |
+| `tree-pattern` | `con`/`PatCon` on a real (non-Church-encoded) recursive type, folded three times | linear |
+| `variant-pattern` | `con`/`PatCon` dispatch across 20 constructors in one match chain, crossing eval-fast.mc's dispatch-map threshold | linear |
 | `records` | record construction, multi-field `{s with ...}`, record patterns | linear |
 | `tuples` | tuple construction and patterns, no record update | linear |
 | `primes` | trial division: `muli`/`modi` in two nested tail loops | ~scale^1.5 |
@@ -149,6 +153,7 @@ ones.
 | `seq-index` | `get` and `length` with no allocation in the loop | linear |
 | `seq-build` | `cons`, `snoc`, `concat`, `subsequence`: rope growth | linear |
 | `seq-pattern` | `PatSeqEdge`, both `[x] ++ rest` and `[x] ++ mid ++ [y]` | linear |
+| `fizzbuzz-pattern` | `PatAnd`/`PatOr`/`PatNot` pattern combinators | linear |
 | `seq-set` | `set`, the only three-argument sequence constant | linear |
 | `seq-sort` | merge sort: `splitAt`, patterns, non-tail recursion | n log n |
 | `strings` | `int2char`, `char2int`, `eqc` over a character sequence | linear |
@@ -174,6 +179,12 @@ rows isolates one thing:
   and with floats, so the difference is the cost of float values alone.
 * `seq-map` vs `seq-build` -- allocation with a callback per element against
   allocation without one.
+* `church-list` vs `tree-pattern` -- the same shape of benchmark (build once,
+  fold three times) with recursive data Church-encoded as closures against a
+  real `con` type taken apart with `PatCon`.
+* `tree-pattern` vs `variant-pattern` -- the same build-and-dispatch shape on
+  a `con` type, but 2 constructors against 20, isolating the effect of
+  crossing `eval-fast.mc`'s `minPatConChain` dispatch-map threshold.
 
 Apart from `mutual-rec` and `mutual-rec-outer`, every benchmark uses separate
 single-binding `recursive` groups even where a single multi-binding group would
